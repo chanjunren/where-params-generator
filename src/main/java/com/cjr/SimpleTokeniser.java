@@ -7,9 +7,12 @@ import java.io.IOException;
 import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.stream.Stream;
 
+import com.cjr.tokens.AnnotationToken;
+import com.cjr.tokens.FunctionToken;
+import com.cjr.tokens.StatementToken;
 import com.cjr.tokens.Token;
-import com.cjr.tokens.TokenType;
 
 public class SimpleTokeniser {
     private BufferedReader br;
@@ -18,101 +21,107 @@ public class SimpleTokeniser {
     public SimpleTokeniser() {
     }
 
-    public List<Token> tokeniseFile(File inputFile) throws IOException{
+    public List<Token> tokeniseFile(File inputFile) throws IOException {
         List<Token> tokens = new LinkedList<>();
+        
         this.br = new BufferedReader(new FileReader(inputFile));
         String currLine = br.readLine();
         while (currLine != null) {
-            StatementType type = getStatementType(currLine);
-            consolidateTokens(tokens, type, currLine);
+            tokens.add(tokeniseFileStatement(currLine));
             currLine = br.readLine();
         }
         return tokens;
     }
 
-    private StatementType getStatementType(String statement) {
-        if (isStatement(statement)) {
-            System.out.printf("Statement encountered : | %s\n", statement);
-            return StatementType.OTHERS;
-        } else if (isLoopStatement(statement)) {
-            System.out.printf("Loop encountered: %s\n", statement);
-            return StatementType.LOOP;
-        } else if (isCatch(statement)) {
-            System.out.printf("Catch encountered : | %s\n", statement);
-            return StatementType.CATCH;  
-        } else if (isIfStatement(statement)) {
-            System.out.printf("If encountered: %s\n", statement);
-            return StatementType.IF;
-        } else if (isFunction(statement)) {
-            System.out.printf("Function encountered : | %s\n", statement);
-            return StatementType.FUNCTION;
-        } 
-
-        System.out.printf("Others encountered: %s\n", statement);
-        return StatementType.OTHERS;
-    }
-
-    
-    private void consolidateTokens(List<Token> tokens, StatementType stmtType, String stmt) throws IOException {
-        if (stmtType == StatementType.FUNCTION) {
-            if (!stmt.contains("{")) {
-                sb = new StringBuilder(stmt);
-                while (!sb.toString().contains("{")) {
-                    sb.append(br.readLine());
-                }
-            }
-            Token nameToken = new Token(getFunctionName(stmt), TokenType.FUNCTION_NAME);
-            tokens.add(nameToken);
-            tokeniseFunctionBody(tokens);
+    private Token tokeniseFileStatement(String stmt) throws IOException {
+        if (isImport(stmt)) {
+            System.out.printf("Import: %s\n", stmt);
+            return new StatementToken(stmt);
+        } else if (isAnnotation(stmt)) {
+            System.out.printf("Annotation: %s\n", stmt);
+            return new AnnotationToken(stmt);
+        } else if (isClass(stmt)) {
+            System.out.printf("Class: %s\n", stmt);
+            FunctionToken ft = new FunctionToken(stmt);
+            jumpToOpeningBrace(stmt, '{', '}');
+            ft.setChildrenTokens(tokeniseBodyWithBraces('{', '}'));
+            return ft;
         } else {
-            return;
+            System.err.printf("Unhandled file statement type: %s\n", stmt);
+            return null;
         }
     }
 
-    private void tokeniseFunctionBody(List<Token> tokens) throws IOException {
-        int numberOfCloseBracketsLeft = 1;
-        boolean isFunctionBodyTokenised = numberOfCloseBracketsLeft != 0;
-        while (!isFunctionBodyTokenised) {
-            String stmt = br.readLine();
-            if (isIfStatement(stmt)) {
-                System.out.println("If statement encountered!");
-            } else if (isLoopStatement(stmt)) {
-                System.out.println("Loop statement encountered!");
-            }
-            numberOfCloseBracketsLeft += stmt.chars().filter(c -> (c == '{')).count();
-            numberOfCloseBracketsLeft -= stmt.chars().filter(c -> (c == '}')).count();
+    private List<Token> tokeniseBodyWithBraces(char openingBraceType, char closingBraceType) throws IOException {
+        String stmtBody = getBody(openingBraceType, closingBraceType);
+        System.out.printf(" === BODY === %s\n === END ===\n", stmtBody);
+        List<Token> tokens = new LinkedList<>();
+        // Tokenise...
+
+        return tokens;
+    }
+
+    private boolean isClass(String stmt) {
+        return stmt.matches("(public|private|protected)? (class) (.+)\\{");
+    }
+
+    private boolean isImport(String stmt) {
+        return stmt.matches("(import) (.*)(;)");
+    }
+
+    private boolean isStatement(String stmt) {
+        return stmt.contains(";");
+    }
+
+    private boolean isFunction(String stmt) {
+        // access modifier, static?, return_type, name, arguments
+        return stmt.matches("(public|private|protected)? (static)? (.*) (.*) (\\()");
+    }
+
+    private boolean isIfStatement(String stmt) {
+        return Arrays.stream(stmt.split(" ")).anyMatch(s -> s.equals("if"));
+    }
+
+    private boolean isLoop(String stmt) {
+        String forPattern = "(for) \\(";
+        String whilePattern = "(while)( \\()";
+        return stmt.matches(forPattern) || stmt.matches(whilePattern);
+    }
+
+    private boolean isAnnotation(String stmt) {
+        return stmt.matches("@(.*)");
+    }
+
+    private boolean isCatch(String stmt) {
+        return stmt.matches("catch \\((.*)\\)");
+    }
+
+    private void jumpToOpeningBrace(String stmt, char openingBraceType, char closingBraceType) throws IOException {
+        while (stmt.chars().filter(c -> c == openingBraceType).count() - stmt.chars().filter(c -> c == closingBraceType).count() 
+            != 1l) {
+            br.readLine();
         }
     }
 
-    private boolean isStatement(String statement) {
-        if (statement.contains(";")) return true;
-        return false;
+    private int getNumberOfBracesLeft(String stmt, char openingBraceType, char closingBraceType) {
+        return (int) stmt.chars().filter(c -> c == openingBraceType).count()
+        -  (int) stmt.chars().filter(c -> c == closingBraceType).count();
     }
 
-    private boolean isFunction(String statement) {
-        String functionPattern = "(.*)(\\(.*)";
-        
-        return statement.matches(functionPattern) && !isLoopStatement(statement) && !isAnnotation(statement) && !isCatch(statement);
+    private String getBody(char openingBraceType, char closingBraceType) throws IOException {
+        String currStmt = br.readLine();
+        sb = new StringBuilder(currStmt);
+        int numberOfBracesLeft = getNumberOfBracesLeft(currStmt, openingBraceType, closingBraceType);
+        // Because opening brace has been jumped
+        while (numberOfBracesLeft != -1 && currStmt != null) {
+            sb.append("\n");
+            sb.append(currStmt);
+            numberOfBracesLeft += getNumberOfBracesLeft(currStmt, openingBraceType, closingBraceType);
+            currStmt = br.readLine();
+        }
+        return sb.toString();
     }
-
-    private boolean isIfStatement(String statement) {
-        return Arrays.stream(statement.split(" ")).anyMatch(s -> s.equals("if"));
-    }
-
-    private boolean isLoopStatement(String statement) {
-        String forPattern = "(for).*\\(";
-        String whilePattern = "(while)(.*\\()";
-        return statement.matches(forPattern) || statement.contains(whilePattern);
-    }
-
-    private boolean isAnnotation(String statement) {
-        return statement.contains("@");
-    }
-
-    private boolean isCatch(String statement) {
-        return Arrays.stream(statement.split(" ")).anyMatch(s -> s.equals("catch"));
-    }
-
+    
     private String getFunctionName(String stmt) {
         String[] splitStmt = stmt.split(" ");
         int currIdx = 0;
@@ -121,6 +130,14 @@ public class SimpleTokeniser {
 
         return currElement.substring(0, currElement.indexOf("("));
     }
+
+    // private String getFullExpression() {
+
+    // }
+
+    // private String getCommentBody() {
+
+    // }
 
     // public static void main(String[] args) {
     //     SimpleTokeniser tokeniser = new SimpleTokeniser();

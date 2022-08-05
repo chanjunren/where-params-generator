@@ -1,5 +1,11 @@
 package com.cjr;
 
 public enum StatementType {
-    FUNCTION, IF, LOOP, OTHERS, CATCH
+    // Typical lines you come across before hitting functions
+    IMPORT, CLASS, ANNOTATION,
+    // Class body (functions, assignments etc.)
+    FUNCTION, OTHERS,
+    // Function Body
+    IF, LOOP, CATCH, BIZ,
+    UNKNOWN
 }

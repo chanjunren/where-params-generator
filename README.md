@@ -6,6 +6,11 @@ Todo / Cases to consider:
 - Outputting of text
 - Support for biz exceptions
 
+- Todo: change logic for tokenizing
+
+Assumptions: 
+- No comments on the same line as a piece of code? Logic probably won't handle
+
 Concepts / Things to look up for future development if necessary
 - Java Syntax / Semantics
 - Tokenizing
