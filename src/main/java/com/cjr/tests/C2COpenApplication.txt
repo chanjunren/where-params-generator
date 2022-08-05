@@ -1,0 +1,46 @@
+package com.okcoin.exchange.c2c.open;
+
+import com.bafang.common.BafangCommonClient;
+import com.okcoin.commons.auth.fegin.AuthInnerClient;
+import com.okcoin.commons.rate.limit.annotation.EnableRateLimitAspect;
+import com.okcoin.commons.redis.client.config.EnableOKRedisSDK;
+import com.okcoin.exchange.c2c.open.client.*;
+import com.okcoin.redirect.autoconfigure.EnableRedirectConfiguration;
+import com.okcoin.ucenter.service.client.UsersInnerServiceClient;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
+import org.springframework.cloud.client.discovery.EnableDiscoveryClient;
+import org.springframework.cloud.openfeign.EnableFeignClients;
+import org.springframework.kafka.annotation.EnableKafka;
+import org.springframework.scheduling.annotation.EnableAsync;
+import org.springframework.scheduling.annotation.EnableScheduling;
+import springfox.documentation.swagger2.annotations.EnableSwagger2;
+
+/**
+ * @author: lingqing.wan
+ * Date: 2017-10-12 上午11:28
+ */
+@EnableRedirectConfiguration
+@EnableKafka
+@EnableDiscoveryClient
+@EnableScheduling
+@SpringBootApplication(exclude = {
+        DataSourceAutoConfiguration.class})
+@EnableAsync
+@EnableSwagger2
+@EnableOKRedisSDK
+@EnableRateLimitAspect
+@EnableFeignClients(clients = {AuthInnerClient.class, KycServiceClient.class, AssetServiceClient.class, UsersInnerServiceClient.class,
+    TickerServiceClient.class, SupportServiceClient.class, AmlServiceClient.class, MarketServiceClient.class, BafangCommonClient.class, AlarmServiceClient.class,
+    RobotSendMsgClient.class})
+public class C2COpenApplication {
+    public static void main(final String[] args) {
+        try {
+            SpringApplication.run(C2COpenApplication.class, args);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+    }
+}

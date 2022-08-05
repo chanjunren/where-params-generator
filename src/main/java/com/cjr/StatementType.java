@@ -1,5 +1,5 @@
 package com.cjr;
 
 public enum StatementType {
-    FUNCTION, IF, OTHERS
+    FUNCTION, IF, LOOP, OTHERS, CATCH
 }
