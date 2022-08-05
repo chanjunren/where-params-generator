@@ -7,12 +7,12 @@ import java.io.IOException;
 import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.List;
-import java.util.stream.Stream;
 
 import com.cjr.tokens.AnnotationToken;
 import com.cjr.tokens.FunctionToken;
 import com.cjr.tokens.StatementToken;
 import com.cjr.tokens.Token;
+import com.cjr.tokens.UnknownToken;
 
 public class SimpleTokeniser {
     private BufferedReader br;
@@ -48,9 +48,10 @@ public class SimpleTokeniser {
             return ft;
         } else {
             System.err.printf("Unhandled file statement type: %s\n", stmt);
-            return null;
+            return new UnknownToken(stmt);
         }
     }
+
 
     private List<Token> tokeniseBodyWithBraces(char openingBraceType, char closingBraceType) throws IOException {
         String stmtBody = getBody(openingBraceType, closingBraceType);
