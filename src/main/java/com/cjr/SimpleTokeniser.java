@@ -1,65 +1,92 @@
 package com.cjr;
 
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileReader;
-import java.io.IOException;
-import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Queue;
 
 import com.cjr.tokens.AnnotationToken;
+import com.cjr.tokens.ClassToken;
 import com.cjr.tokens.FunctionToken;
 import com.cjr.tokens.StatementToken;
 import com.cjr.tokens.Token;
 import com.cjr.tokens.UnknownToken;
 
 public class SimpleTokeniser {
-    private BufferedReader br;
     private StringBuilder sb;
-    
-    public SimpleTokeniser() {
+    private Queue<String> inputQueue;
+
+    public SimpleTokeniser(Queue<String> inputQueue) {
+        this.inputQueue = inputQueue;
     }
 
-    public List<Token> tokeniseFile(File inputFile) throws IOException {
-        List<Token> tokens = new LinkedList<>();
-        
-        this.br = new BufferedReader(new FileReader(inputFile));
-        String currLine = br.readLine();
-        while (currLine != null) {
-            tokens.add(tokeniseFileStatement(currLine));
-            currLine = br.readLine();
+    public List<Token> tokeniseFile() {
+        List<Token> tokens = new LinkedList<>();        
+        while (!inputQueue.isEmpty()) {
+            tokens.add(tokeniseFileStatement(inputQueue.poll()));
         }
         return tokens;
     }
 
-    private Token tokeniseFileStatement(String stmt) throws IOException {
+    private Token tokeniseFileStatement(String stmt) {
         if (isImport(stmt)) {
-            System.out.printf("Import: %s\n", stmt);
             return new StatementToken(stmt);
         } else if (isAnnotation(stmt)) {
-            System.out.printf("Annotation: %s\n", stmt);
-            return new AnnotationToken(stmt);
+            String fullAnnotation = getExpressionBody(stmt);
+            System.out.printf("Annotation: %s\n", fullAnnotation);
+            return new AnnotationToken(fullAnnotation);
         } else if (isClass(stmt)) {
-            System.out.printf("Class: %s\n", stmt);
-            FunctionToken ft = new FunctionToken(stmt);
+            ClassToken ct = new ClassToken(stmt);
+            System.out.println(ct);
             jumpToOpeningBrace(stmt, '{', '}');
-            ft.setChildrenTokens(tokeniseBodyWithBraces('{', '}'));
-            return ft;
+            ct.setChildrenTokens(tokeniseClassBody());
+            return ct;
         } else {
             System.err.printf("Unhandled file statement type: %s\n", stmt);
             return new UnknownToken(stmt);
         }
     }
 
+    private List<Token> tokeniseClassBody() {
+        Queue<String> body = getBodyOfScope(1);
+        System.out.println("=== Start of class body === ");
+        for (String bodyStmt: body) {
+            System.out.println(bodyStmt);
+        }
+        System.out.println("=== End of class body");
+        List<Token> children = new LinkedList<>();
+        
+        // while (!body.isEmpty()) {
+        //     String curr = body.poll();
+        //     children.add(tokeniseClassBodyStmt(body, curr));
+        // }
+        return children;
+    }
 
-    private List<Token> tokeniseBodyWithBraces(char openingBraceType, char closingBraceType) throws IOException {
-        String stmtBody = getBody(openingBraceType, closingBraceType);
-        System.out.printf(" === BODY === %s\n === END ===\n", stmtBody);
-        List<Token> tokens = new LinkedList<>();
-        // Tokenise...
+    private Token tokeniseClassBodyStmt(Queue<String> body, String curr) {
+        if (isStatement(curr)) {
+            return new StatementToken(curr);
+        } else if (isAnnotation(curr)) {
+            String fullAnnotation = getExpressionBody(curr);
+            return new AnnotationToken(fullAnnotation);
+        } else if (isFunction(curr)) {
+            FunctionToken ft = new FunctionToken(getFunctionName(curr));
+            jumpToOpeningBrace(curr, '{', '}');
+            ft.setChildrenTokens(tokeniseBlockBody());
+            return ft;
+        } else {
+            System.err.println("Unhandled body stmt type");
+            return new UnknownToken(curr);
+        }
+    }
 
-        return tokens;
+
+    // for functions / if / try / catch / loop blocks
+    private List<Token> tokeniseBlockBody() {
+        return new LinkedList<>();
+    }
+
+    private Token tokeniseBlockStmt() {
+        return new UnknownToken("What");
     }
 
     private boolean isClass(String stmt) {
@@ -80,12 +107,12 @@ public class SimpleTokeniser {
     }
 
     private boolean isIfStatement(String stmt) {
-        return Arrays.stream(stmt.split(" ")).anyMatch(s -> s.equals("if"));
+        return stmt.matches("(if)( )?\\((.*)");
     }
 
     private boolean isLoop(String stmt) {
-        String forPattern = "(for) \\(";
-        String whilePattern = "(while)( \\()";
+        String forPattern = "(for)( )?\\((.*)";
+        String whilePattern = "(while)( )?\\((.*)";
         return stmt.matches(forPattern) || stmt.matches(whilePattern);
     }
 
@@ -93,14 +120,15 @@ public class SimpleTokeniser {
         return stmt.matches("@(.*)");
     }
 
+    // Assuming catch statemnet only consists of one line
     private boolean isCatch(String stmt) {
-        return stmt.matches("catch \\((.*)\\)");
+        return stmt.matches("catch( )?\\((.*)\\)");
     }
 
-    private void jumpToOpeningBrace(String stmt, char openingBraceType, char closingBraceType) throws IOException {
+    private void jumpToOpeningBrace(String stmt, char openingBraceType, char closingBraceType) {
         while (stmt.chars().filter(c -> c == openingBraceType).count() - stmt.chars().filter(c -> c == closingBraceType).count() 
             != 1l) {
-            br.readLine();
+            inputQueue.poll();
         }
     }
 
@@ -109,16 +137,25 @@ public class SimpleTokeniser {
         -  (int) stmt.chars().filter(c -> c == closingBraceType).count();
     }
 
-    private String getBody(char openingBraceType, char closingBraceType) throws IOException {
-        String currStmt = br.readLine();
-        sb = new StringBuilder(currStmt);
-        int numberOfBracesLeft = getNumberOfBracesLeft(currStmt, openingBraceType, closingBraceType);
+    private Queue<String> getBodyOfScope(int numberOfBracesLeft) {
+        Queue<String> body = new LinkedList<>();
         // Because opening brace has been jumped
-        while (numberOfBracesLeft != -1 && currStmt != null) {
+        while (numberOfBracesLeft != 0) {
+            String currStmt = inputQueue.poll();
+            body.add(currStmt);
+            numberOfBracesLeft += getNumberOfBracesLeft(currStmt, '{', '}');
+        }
+        return body;
+    }
+
+    private String getExpressionBody(String currStmt) {
+        sb = new StringBuilder(currStmt);
+        int numberOfBracesLeft = getNumberOfBracesLeft(currStmt, '(', ')');
+        while (numberOfBracesLeft != 0 && currStmt != null) {
             sb.append("\n");
+            currStmt = inputQueue.poll();
             sb.append(currStmt);
-            numberOfBracesLeft += getNumberOfBracesLeft(currStmt, openingBraceType, closingBraceType);
-            currStmt = br.readLine();
+            numberOfBracesLeft += getNumberOfBracesLeft(currStmt, '(', ')');
         }
         return sb.toString();
     }
@@ -128,21 +165,12 @@ public class SimpleTokeniser {
         int currIdx = 0;
         String currElement = splitStmt[currIdx];
         while (!currElement.contains("(")) currElement = splitStmt[++currIdx];
-
         return currElement.substring(0, currElement.indexOf("("));
     }
 
-    // private String getFullExpression() {
-
-    // }
-
-    // private String getCommentBody() {
-
-    // }
-
     // public static void main(String[] args) {
-    //     SimpleTokeniser tokeniser = new SimpleTokeniser();
-    //     String test = "public static void main(String[] args) {";
-    //     System.out.println(tokeniser.isFunction(test));
+    //     SimpleTokeniser st = new SimpleTokeniser();
+    //     System.out.println(st.isIfStatement("if(int a, int b) {"));
+    //     System.out.println(st.isIfStatement("if (int a, int b"));
     // }
 }

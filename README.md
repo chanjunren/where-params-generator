@@ -5,6 +5,7 @@ Todo / Cases to consider:
 - Generating objects with their respective nested branch params
 - Outputting of text
 - Support for biz exceptions
+- Inner classes
 
 - Todo: change logic for tokenizing
 

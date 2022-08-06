@@ -1,8 +1,12 @@
 package com.cjr;
 
+import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileReader;
 import java.io.IOException;
+import java.util.LinkedList;
 import java.util.List;
+import java.util.Queue;
 
 import com.cjr.tokens.Token;
 
@@ -15,17 +19,21 @@ public class App
     
     public static void main( String[] args )
     {
-        File inputFile = new File(FILE_PATH);
-        SimpleTokeniser tokeniser = new SimpleTokeniser();
+        Queue<String> inputFileStrings = new LinkedList<>();
+
         try {
-            List<Token> tokens = tokeniser.tokeniseFile(inputFile);
-            // for (Token t: tokens) {
-            //     System.out.println(t);
-            // }
+            File inputFile = new File(FILE_PATH);
+            BufferedReader br = new BufferedReader(new FileReader(inputFile));
+            String currStmt = br.readLine();
+            while (currStmt != null) {
+                inputFileStrings.add(currStmt);
+                currStmt = br.readLine();
+            }
+            br.close();
         } catch (IOException e) {
             System.err.println(e);
-        } 
-        // List<FunctionObject> functions = simpleParser.parseFile();
-        // OutputPrinter.print(functions);
+        }
+        SimpleTokeniser tokeniser = new SimpleTokeniser(inputFileStrings);
+        tokeniser.tokeniseFile();
     }
 }
