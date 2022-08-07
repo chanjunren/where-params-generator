@@ -8,15 +8,22 @@ import lombok.Data;
 @Data
 public class ClassToken extends Token {
     
-    private List<Token> childrenTokens;
+    private List<Token> children;
 
     public ClassToken(String value) {
         super(value);
-        childrenTokens = new LinkedList<>();
+        children = new LinkedList<>();
     }
     
     @Override
     public String toString() {
-        return String.format("Class: %s", super.getValue());
+        // StringBuilder sb = new StringBuilder();
+        // for (Token t: children) {
+        //     sb.append("\t");
+        //     sb.append(t.toString());
+        //     sb.append(", ");
+        // }
+        return String.format("=== Class: %s ===\n\t Children: TO BE IMPLEMENTED\n", 
+            super.getValue());
     }
  }

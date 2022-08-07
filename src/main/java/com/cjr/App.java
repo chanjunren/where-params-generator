@@ -5,20 +5,15 @@ import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
 import java.util.LinkedList;
-import java.util.List;
 import java.util.Queue;
 
-import com.cjr.tokens.Token;
-
-public class App 
-{
+public class App {
 
     // private static final String FILE_PATH = "/Users/chanjunren/Projects/test-fields-generator/src/main/java/com/cjr/tests/V3TradingOrderController.txt";
     private static final String FILE_PATH = "/Users/chanjunren/Projects/test-fields-generator/src/main/java/com/cjr/tests/C2COpenApplication.txt";
    
     
-    public static void main( String[] args )
-    {
+    public static void main( String[] args ) {
         Queue<String> inputFileStrings = new LinkedList<>();
 
         try {

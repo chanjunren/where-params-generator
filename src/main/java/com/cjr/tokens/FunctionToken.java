@@ -7,13 +7,11 @@ import lombok.Data;
 
 @Data
 public class FunctionToken extends Token {
-    private List<Token> childrenTokens;
-
+    private List<Token> children;
 
     public FunctionToken(String value) {
         super(value);
-        //TODO Auto-generated constructor stub
-        childrenTokens = new LinkedList<>();
+        children = new LinkedList<>();
     }
 
     @Override
