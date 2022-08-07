@@ -57,10 +57,10 @@ public class SimpleTokeniser {
         System.out.println("=== End of class body");
         List<Token> children = new LinkedList<>();
         
-        // while (!body.isEmpty()) {
-        //     String curr = body.poll();
-        //     children.add(tokeniseClassBodyStmt(body, curr));
-        // }
+        while (!body.isEmpty()) {
+            String curr = body.poll();
+            children.add(tokeniseClassBodyStmt(body, curr));
+        }
         return children;
     }
 
@@ -68,11 +68,11 @@ public class SimpleTokeniser {
         if (isStatement(curr)) {
             return new StatementToken(curr);
         } else if (isAnnotation(curr)) {
-            String fullAnnotation = getExpressionBodyOfAnnotation(curr);
+            String fullAnnotation = getFullExpression(curr, body);
             return new AnnotationToken(fullAnnotation);
         } else if (isFunction(curr)) {
             FunctionToken ft = new FunctionToken(getFunctionName(curr));
-            jumpToOpeningBrace(curr, '{', '}');
+            jumpToOpeningBrace(curr, body,'{', '}');
             ft.setChildren(tokeniseBlockBody(body));
             return ft;
         } else {
@@ -204,9 +204,10 @@ public class SimpleTokeniser {
         return currElement.substring(0, currElement.indexOf("("));
     }
 
-    // public static void main(String[] args) {
-    //     SimpleTokeniser st = new SimpleTokeniser();
-    //     System.out.println(st.isIfStatement("if(int a, int b) {"));
-    //     System.out.println(st.isIfStatement("if (int a, int b"));
-    // }
+    public static void main(String[] args) {
+        SimpleTokeniser st = new SimpleTokeniser(new LinkedList<>());
+        String s = "if (CollectionUtils.isEmpty(myTradingOrderList)) {}";
+        st.getFullExpression(s, new LinkedList<>());
+
+    }
 }
