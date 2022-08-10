@@ -33,13 +33,17 @@ public class SimpleTokeniser {
         if (isImport(stmt)) {
             return new StatementToken(stmt);
         } else if (isAnnotation(stmt)) {
-            String fullAnnotation = getFullExpression(stmt, fileBody);
-            System.out.printf("Annotation: %s\n", fullAnnotation);
-            return new AnnotationToken(fullAnnotation);
+            Queue<String> fullAnnotation = getLinesForFullExpression(stmt, fileBody);
+            sb = new StringBuilder();
+            for (String s: fullAnnotation) {
+                sb.append(s);
+                sb.append("\n");
+            }
+            return new AnnotationToken(sb.toString());
         } else if (isClass(stmt)) {
             ClassToken ct = new ClassToken(stmt);
             System.out.println(ct);
-            jumpToOpeningBrace(stmt, fileBody, '{', '}');
+            jumpToOpeningBrace(stmt, fileBody);
             ct.setChildren(tokeniseClassBody(fileBody));
             return ct;
         } else {
@@ -50,11 +54,6 @@ public class SimpleTokeniser {
 
     private List<Token> tokeniseClassBody(Queue<String> fileBody) {
         Queue<String> body = getBodyOfScope(1, fileBody);
-        System.out.println("=== Start of class body === ");
-        for (String bodyStmt: body) {
-            System.out.println(bodyStmt);
-        }
-        System.out.println("=== End of class body");
         List<Token> children = new LinkedList<>();
         
         while (!body.isEmpty()) {
@@ -65,18 +64,29 @@ public class SimpleTokeniser {
     }
 
     private Token tokeniseClassBodyStmt(Queue<String> body, String curr) {
-        if (isStatement(curr)) {
+        if (isAnnotation(curr)) {
+            System.out.printf("Class annotation: %s\n", curr);
+            return new AnnotationToken(curr);
+        } else if (isStatement(curr)) {
+            System.out.printf("Class body stmt: %s\n", curr);
             return new StatementToken(curr);
         } else if (isAnnotation(curr)) {
-            String fullAnnotation = getFullExpression(curr, body);
-            return new AnnotationToken(fullAnnotation);
+            Queue<String> fullAnnotation = getLinesForFullExpression(curr, body);
+            sb = new StringBuilder();
+            for (String s: fullAnnotation) {
+                sb.append(s);
+                sb.append("\n");
+            }
+            System.out.printf("Class body annotation: %s\n", sb.toString());
+            return new AnnotationToken(sb.toString());
         } else if (isFunction(curr)) {
+            System.out.printf("Class body fn: %s\n", curr);
             FunctionToken ft = new FunctionToken(getFunctionName(curr));
-            jumpToOpeningBrace(curr, body,'{', '}');
+            jumpToOpeningBrace(curr, body);
             ft.setChildren(tokeniseBlockBody(body));
             return ft;
         } else {
-            System.err.println("Unhandled body stmt type");
+            System.out.printf("Unhandled class body stmt type: %s\n", curr);
             return new UnknownToken(curr);
         }
     }
@@ -84,6 +94,7 @@ public class SimpleTokeniser {
 
     // for functions / if / try / catch / loop blocks
     private List<Token> tokeniseBlockBody(Queue<String> body) {
+        System.out.println("Tokenising block body");
         List<Token> block = new LinkedList<>();
         while (!body.isEmpty()) {
             String currStmt = body.poll();
@@ -93,13 +104,23 @@ public class SimpleTokeniser {
     }
 
     private Token tokeniseBlockStmt(String stmt, Queue<String> body) {
-        if (isStatement(stmt)) {
+        if (isAnnotation(stmt)) {
+            System.out.printf("Annotation: %s\n", stmt);
+            return new AnnotationToken(stmt);
+        } else if (isStatement(stmt)) {
+            System.out.printf("Statement: %s\n", stmt);
             return new StatementToken(stmt);
         } else if (isIfStatement(stmt)) {
+            System.out.printf("If Statement: %s\n", stmt);
             return tokeniseIfSttmt(stmt, body);
         } else if (isLoop(stmt)) { 
+            System.out.printf("Loop Statement: %s\n", stmt);
             return tokeniseLoopToken(stmt, body);
-        } else {
+        } else if (isCatch(stmt))  {
+            System.out.printf("Catch Statement: %s\n", stmt);
+            return new UnknownToken(stmt);
+        }
+        else {
             System.err.printf("Unhandled block stmt: %s\n", stmt);
             return new UnknownToken(stmt);
         }
@@ -119,7 +140,7 @@ public class SimpleTokeniser {
 
     private boolean isFunction(String stmt) {
         // access modifier, static?, return_type, name, arguments
-        return stmt.matches("(public|private|protected)? (static)? (.*) (.*) (\\()");
+        return stmt.matches("(public|private|protected)? ?(static)? ?(.*) (.*) ?(\\()(.*)");
     }
 
     private boolean isIfStatement(String stmt) {
@@ -138,13 +159,13 @@ public class SimpleTokeniser {
 
     // Assuming catch statemnet only consists of one line
     private boolean isCatch(String stmt) {
-        return stmt.matches("catch( )?\\((.*)\\)");
+        return stmt.matches("(\\}?\\ ?)catch(\\ )?\\((.*)\\) ?\\{");
     }
 
-    private void jumpToOpeningBrace(String stmt, Queue<String> body, char openingBraceType, char closingBraceType) {
-        while (stmt.chars().filter(c -> c == openingBraceType).count() - stmt.chars().filter(c -> c == closingBraceType).count() 
-            != 1l) {
-            body.poll();
+    private void jumpToOpeningBrace(String stmt, Queue<String> body) {
+        String curr = stmt;
+        while (getNumberOfBracesLeft(curr, '{', '}') != 1) {
+            curr = body.poll();
         }
     }
 
@@ -157,7 +178,7 @@ public class SimpleTokeniser {
         Queue<String> bodyList = new LinkedList<>();
         // Because opening brace has been jumped
         while (numberOfBracesLeft != 0) {
-            String currStmt = inputQueue.poll();
+            String currStmt = body.poll();
             bodyList.add(currStmt);
             numberOfBracesLeft += getNumberOfBracesLeft(currStmt, '{', '}');
         }
@@ -165,27 +186,50 @@ public class SimpleTokeniser {
     }
 
     // For annotations outside of a class (does not handle inner class)
-    private String getFullExpression(String currStmt, Queue<String> body) {
-        sb = new StringBuilder(currStmt);
+    private Queue<String> getLinesForFullExpression(String currStmt, Queue<String> body) {
+        Queue<String> allLines = new LinkedList<>();
+        allLines.add(currStmt);
         int numberOfBracesLeft = getNumberOfBracesLeft(currStmt, '(', ')');
         while (numberOfBracesLeft != 0 && currStmt != null) {
-            sb.append("\n");
             currStmt = body.poll();
-            sb.append(currStmt);
+            allLines.add(currStmt);
             numberOfBracesLeft += getNumberOfBracesLeft(currStmt, '(', ')');
         }
+        return allLines;
+    }
+
+    private String getFullExpression(Queue<String> body) {
+        String curr = body.poll();
+        sb = new StringBuilder(curr);
+        deleteCharUntilStartOfExpression(sb);
+        deleteCharUntilEndOfExpression(sb);
         return sb.toString();
+    }
+
+    private void deleteCharUntilStartOfExpression(StringBuilder sb) {
+        while (sb.charAt(0) != '(') {
+            sb.deleteCharAt(0);
+        }
+    }
+
+    private void deleteCharUntilEndOfExpression(StringBuilder sb) {
+        while (sb.charAt(sb.length() - 1) != ')') {
+            sb.deleteCharAt(sb.length() - 1);
+        }
     }
     
     // Get expression string
     // Parse expression string into tokens
     // Parse children 
-    private IfToken tokeniseIfSttmt(String stmt, Queue<String> parentBody) {
+    private IfToken tokeniseIfSttmt(String stmt, Queue<String> body) {
         IfToken it = new IfToken(stmt);
-        String fullExpression = getFullExpression(stmt, parentBody);
-        System.out.printf("If Full Expression: %s\n", fullExpression);
-        System.out.printf("If Body: %s\n", getBodyOfScope(-1, parentBody));
-        // it.setChildren(getBodyOfScope(-1, parentBody));
+        Queue<String> fullExpressionList = getLinesForFullExpression(stmt, body);
+        for (String s: fullExpressionList) {
+            System.out.printf("Expression in list: %s\n", s);
+        }
+        String fullExpression = getFullExpression(fullExpressionList);
+        it.setExpressionString(fullExpression);
+        it.setChildren(tokeniseBlockBody(body));
         return new IfToken(stmt);
     }
 
@@ -193,7 +237,12 @@ public class SimpleTokeniser {
     // Parse expression string into tokens
     // Parse children 
     private LoopToken tokeniseLoopToken(String stmt, Queue<String> body) {
-        return new LoopToken(stmt);
+        LoopToken lt = new LoopToken(stmt);
+        Queue<String> fullExpressionList = getLinesForFullExpression(stmt, body);
+        String fullExpression = getFullExpression(fullExpressionList);
+        lt.setExpressionString(fullExpression);
+        lt.setChildren(tokeniseBlockBody(body));
+        return lt;
     }
     
     private String getFunctionName(String stmt) {
@@ -202,12 +251,5 @@ public class SimpleTokeniser {
         String currElement = splitStmt[currIdx];
         while (!currElement.contains("(")) currElement = splitStmt[++currIdx];
         return currElement.substring(0, currElement.indexOf("("));
-    }
-
-    public static void main(String[] args) {
-        SimpleTokeniser st = new SimpleTokeniser(new LinkedList<>());
-        String s = "if (CollectionUtils.isEmpty(myTradingOrderList)) {}";
-        st.getFullExpression(s, new LinkedList<>());
-
     }
 }

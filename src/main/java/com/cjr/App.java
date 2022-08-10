@@ -9,8 +9,8 @@ import java.util.Queue;
 
 public class App {
 
-    // private static final String FILE_PATH = "/Users/chanjunren/Projects/test-fields-generator/src/main/java/com/cjr/tests/V3TradingOrderController.txt";
-    private static final String FILE_PATH = "/Users/chanjunren/Projects/test-fields-generator/src/main/java/com/cjr/tests/C2COpenApplication.txt";
+    private static final String FILE_PATH = "/Users/chanjunren/Projects/test-fields-generator/src/main/java/com/cjr/tests/V3TradingOrderController.txt";
+    // private static final String FILE_PATH = "/Users/chanjunren/Projects/test-fields-generator/src/main/java/com/cjr/tests/C2COpenApplication.txt";
    
     
     public static void main( String[] args ) {
@@ -21,7 +21,9 @@ public class App {
             BufferedReader br = new BufferedReader(new FileReader(inputFile));
             String currStmt = br.readLine();
             while (currStmt != null) {
-                inputFileStrings.add(currStmt);
+                if (currStmt.trim().length() != 0) {
+                    inputFileStrings.add(currStmt.trim());    
+                }
                 currStmt = br.readLine();
             }
             br.close();

@@ -10,6 +10,9 @@ import lombok.Data;
 public class IfToken extends Token {
     private List<Token> children;
     private List<Token> expressions;
+    private String childrenBody;
+    private String expressionString;
+    
     public IfToken(String value) {
         super(value);
         this.children = new LinkedList<>();

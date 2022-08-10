@@ -1,0 +1,241 @@
+package com.okcoin.exchange.c2c.open.rest.controller.v3;
+
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+import springfox.documentation.annotations.ApiIgnore;
+
+import static com.okcoin.exchange.c2c.open.common.BizPreconditions.checkBizState;
+import static com.okcoin.exchange.c2c.open.common.BizPreconditions.checkBizStateAddLog;
+import static com.okcoin.exchange.c2c.open.common.util.LocaleUtil.T;
+import static java.lang.String.format;
+
+/**
+ * @author: lingqing.wan
+ * @date: 2018-06-29 上午11:38
+ */
+@Slf4j
+@Validated
+@RestController
+@RequestMapping(value = "/v3/c2c/tradingOrders")
+@Api(tags={"Trading order controller"},description = "委托单类接口")
+public class V3TradingOrderController {
+    @Resource
+    private UserService userService;
+    @Resource
+    private BrokerUserService brokerUserService;
+    @Resource
+    private TradingOrderService tradingOrderService;
+    @Resource
+    private DistributedLock distributedLock;
+    @Resource
+    private CurrencyService currencyService;
+    @Resource
+    private V3TradingOrderVoConverter v3TradingOrderVoConverter;
+
+    @Autowired
+    private OKExTickerService okExTickerService;
+    @Resource
+    private ConfigService configService;
+    @Resource
+    private TradeChecker tradeChecker;
+    @Resource
+    private CurrencyPairService currencyPairService;
+    @Resource
+    private ShareService shareService;
+    @Resource
+    private CouponService couponService;
+    @Resource
+    private UserBlackService userBlackService;
+    @Resource
+    private ActionDisableService actionDisableService;
+
+    @Resource
+    private UserBalanceService userBalanceService;
+
+    @Resource
+    private UserReceiptService userReceiptService;
+
+    @Resource
+    private WebAppEnvProperties webAppEnvProperties;
+
+    @Resource
+    private GlobalBusinessService globalBusinessService;
+    @Resource
+    private TradingOrderReceiptRelationService tradingOrderReceiptRelationService;
+
+    @Resource
+    private UserPunishmentService userPunishmentService;
+
+
+    @OKRateLimit
+    @RateLimiter(LimitLevel.HIGH)
+    @ApiOperation(value = "获取交易单列表")
+    @GetMapping(value = "/books")
+    public ResponseResult<Map<String, List<TradingOrderBookMemberNewVo>>> getNewBook(
+        @ApiIgnore
+        @AttributeValue(required = false) final OkCoinUser currentUser,
+        @ApiParam(required = true, value = "数据类型：all,sell,buy")
+        @RequestParam(required = false, defaultValue = "all") final String side,
+        @ApiParam(required = true, value = "基础货币符号：BTC,ETC")
+        @RequestParam(defaultValue = "BTC") final String baseCurrency,
+        @ApiParam(required = true, value = "报价货币符号：CNY,USD")
+        @RequestParam(defaultValue = "CNY") final String quoteCurrency,
+        @ApiParam(value = "用户类型:all,certified，blockTrade")
+        @RequestParam(required = false, defaultValue = "all") final String userType,
+        @ApiParam(value = "过滤基础币数量")
+        @RequestParam(required = false, defaultValue = "0") final Double baseMinAmount,
+        @ApiParam(value = "过滤基础币限额, 是基础币数量乘以单价和委托单限额比较")
+        @RequestParam(required = false, defaultValue = "0") final Double baseQuota,
+        @ApiParam(value = "过滤报价币数量（大于）")
+        @RequestParam(required = false, defaultValue = "0") final Double quoteMinAmount,
+        @ApiParam(value = "过滤报价币数量（小于）")
+        @RequestParam(required = false, defaultValue = "0") final Double quoteMaxAmount,
+        @ApiParam(value = "过滤单笔订单报价币数量（大于）")
+        @RequestParam(required = false, defaultValue = "0") final Double quoteMinAmountPerOrder,
+        @ApiParam(value = "过滤单笔订单报价币数量（小于）")
+        @RequestParam(required = false, defaultValue = "0") final Double quoteMaxAmountPerOrder,
+        @ApiParam(value = "支付方式:all,bank,aliPay,wxPay")
+        @RequestParam(required = false, defaultValue = "all") final String paymentMethod,
+        @ApiParam(value = "交易所BrokerId")
+        @AttributeValue final int brokerId,
+        @ApiParam(value = "仅展示可交易")
+        @RequestParam(required = false, defaultValue = "false") final Boolean showTrade,
+        @ApiParam(value = "不展示T+1")
+        @RequestParam(required = false, defaultValue = "false") final Boolean noShowSafetyLimit,
+        @ApiParam(value = "仅展示我的关注")
+        @RequestParam(required = false, defaultValue = "false") final Boolean showFollow,
+        @ApiParam(value = "展示交易过")
+        @RequestParam(required = false, defaultValue = "false") final Boolean showAlreadyTraded,
+        @ApiParam(value = "不展示接单广告")
+        @RequestParam(required = false, defaultValue = "false") final Boolean receivingAds,
+        HttpServletRequest request) {
+        if (!DeviceDetector.isApp(request) && DeviceDetector.isSpider(request)) {
+            String ua = request.getHeader("User-Agent");
+            log.warn("spider. ua:{}", ua);
+            throw new OkC2CTooManyRequestsException();
+        }
+
+        final List<CurrencyPair> currencyPairList = currencyPairService.listCurrencyPair(brokerId);
+        boolean anyCurrencyPair = currencyPairList.stream().anyMatch(currencyPair -> currencyPair.getQuoteCurrency().equalsIgnoreCase(quoteCurrency)
+                && currencyPair.getBaseCurrency().equalsIgnoreCase(baseCurrency));
+
+        // 获取qp买币支持的币种
+        List<String> shadowCurrencyArr = this.currencyService.shadowCurrencyArr(quoteCurrency);
+        // 是否qp买币
+        boolean swap = shadowCurrencyArr.stream().anyMatch(v -> v.equalsIgnoreCase(baseCurrency));
+        // 是qp买币， 但是该币种要求在盘口展示
+        boolean shadowCurrencyDashboardEnabled = this.currencyService.shadowCurrencyEnabledDashboard(C2cConstants.CURRENCY_PAIR_FORMAT(baseCurrency,quoteCurrency));
+        swap = !swap || shadowCurrencyDashboardEnabled;
+        //NON-NLS
+        checkBizState(anyCurrencyPair && swap, false, T("CURRENCY_PAIR_NOT_SUPPORT"));
+
+        final Currency digitalCurrency = this.currencyService.getCurrencyBySymbol(brokerId, baseCurrency);
+        checkBizState(null != digitalCurrency, false,"Currency not found: %s", baseCurrency);
+        final Currency legalCurrency = this.currencyService.getCurrencyBySymbol(brokerId, quoteCurrency);
+        checkBizState(null != legalCurrency, false,"Currency not found: %s", quoteCurrency);
+
+        String[] configNames = {
+                String.format("block_trade_min_amount_per_order_%s", quoteCurrency),
+                String.format("block_trade_min_amount_per_order_%s", C2cConstants.BASE_LINE)
+        };
+        Double minBlockTradeAmount = this.configService.doubleOfMulti(configNames, 100000d);
+        if (TradingOrderUserTypeEnum.BLOCKTRADE.getType().equalsIgnoreCase(userType)) {
+            checkBizState(brokerId == C2cConstants.OKEX_BROKER_ID, () -> T("retail_fiatmsg_block_trading_not_support_broker_new_key", minBlockTradeAmount.toString()));
+        }
+        //app新老版本判断（收付款方式数量限制）
+        // NON-NLS
+        boolean highVersion = DeviceDetector.compareWithBuildVersion(ClientMessageHolder.get().getClientUserAgent(), "5.0.12", "5.0.12", "20210722");
+
+        final TradingOrderBookVo tradingOrderBookVo = this.tradingOrderService.getBook(
+                TradingOrderBookRequest.builder()
+                        .digitalCurrency(baseCurrency)
+                        .legalCurrency(quoteCurrency)
+                        .side(side)
+                        .userType(userType)
+                        .baseMinAmount(baseMinAmount)
+                        .quoteMinAmount(quoteMinAmount)
+                        .quoteMaxAmount(quoteMaxAmount)
+                        .quoteMinAmountPerOrder(quoteMinAmountPerOrder)
+                        .quoteMaxAmountPerOrder(quoteMaxAmountPerOrder)
+                        .paymentMethod(paymentMethod)
+                        .user(currentUser == null ? null : currentUser.getUser())
+                        .brokerId(brokerId)
+                        .showTrade(showTrade)
+                        .noShowSafetyLimit(noShowSafetyLimit)
+                        .showFollow(showFollow)
+                        .showAlreadyTraded(showAlreadyTraded)
+                        .receivingAds(receivingAds)
+                        .baseQuota(baseQuota)
+                        .build());
+        List<TradingOrderBookMemberNewVo> sell = CollectionUtils.isEmpty(tradingOrderBookVo.getSell())?
+        new ArrayList<>() : tradingOrderBookVo.getSell().stream().map(a -> v3TradingOrderVoConverter.tOrderMemberVoNewFrom(a,highVersion)).collect(Collectors.toList());
+        List<TradingOrderBookMemberNewVo> buy = CollectionUtils.isEmpty(tradingOrderBookVo.getBuy())?
+                new ArrayList<>() : tradingOrderBookVo.getBuy().stream().map(a -> v3TradingOrderVoConverter.tOrderMemberVoNewFrom(a,highVersion)).collect(Collectors.toList());
+
+        retussrn ResponseResult.success(ImmutableMap.of("sell", sell, "buy", buy));
+    }
+
+    @OKRateLimit
+    @RateLimiter(LimitLevel.HIGH)
+    @ApiOperation(value = "获取我的交易单列表，正在进行中的")
+    @GetMapping(value = "/my")
+    public ResponseResult<List<TradingOrderVo>> getMyTradingOrders(
+        @ApiIgnore
+        @AttributeValue final OkCoinUser currentUser,
+        @RequestParam(required = false)
+        @ApiParam(value = "基础货币符号：BTC,ETC") final String baseCurrency,
+        @RequestParam(required = false)
+        @ApiParam(value = "报价货币符号：CNY,USD") final String quoteCurrency,
+        @RequestParam(required = false, defaultValue = "all")
+        @ApiParam(required = true, value = "数据类型：all,sell,buy") final String side) {
+
+        final Boolean isBuy = "all".equalsIgnoreCase(side) ? null : "buy".equalsIgnoreCase(side);
+
+        final List<TradingOrderVo> myTradingOrderList = this.tradingOrderService.getMyTradingOrders(currentUser.getUserId(), currentUser.getBrokerId(), quoteCurrency, baseCurrency, isBuy);
+
+        if (CollectionUtils.isEmpty(myTradingOrderList)) {
+            return ResponseResult.success(new ArrayList<>());
+        }
+
+        return ResponseResult.success(myTradingOrderList);
+    }
+
+    /**
+     * IM升级切换前置逻辑校验
+     */
+    private void imUpgradeCheck(Integer brokerId) {
+        boolean isUpgrading = this.configService.booleanOf(ConfigNameEnum.OTC_BUSINESS_UPGRADING, false);
+
+        //1、未进入升级流程时，允许新版APP交易; 2、升级结束之后，打开低版本强校验开关，则强校验，可配置渠道不走强校验
+        if (!isUpgrading) {
+            if (brokerId != null && brokerId.equals(0)) {
+                String ua = ClientMessageHolder.get().getClientUserAgent();
+                // NON-NLS
+                String appVersion = this.configService.stringOf(ConfigNameEnum.IM_UPGRADE_APP_VERSION.getName(), "5.2.0|20210812");
+                String[] app = appVersion.split("\\|");
+                boolean lowAppDisabled = this.configService.booleanOf(ConfigNameEnum.LOW_VERSION_APP_DISABLED, false);
+                // NON-NLS
+                boolean highVersion = DeviceDetector.compareWithBuildVersion(ClientMessageHolder.get().getClientUserAgent(), app[0], "1.3.8", app[1]);
+
+                log.info("imUpgradeCheck ua:{}", ua);
+                if (lowAppDisabled && DeviceDetector.isApp(ua) && !highVersion) {
+                    String currentChannel = DeviceDetector.getChannel(ua);
+                    Set<String> channelList = this.configService.setOf(ConfigNameEnum.APP_CHANNEL_NOT_CHECK_LIST.getName(), Collections.emptySet());
+                    log.info("imUpgradeCheck tradingOrder channelList:{}, isContains:{}", channelList.toString(), currentChannel, channelList.contains(currentChannel));
+                    //禁止低版本下单，提示升级到高版本，渠道配置列表的市场不拦截
+                    checkBizState(channelList.contains(currentChannel), T("retail_fiatmsg_low_version_app_disabled"));
+                }
+            }
+        } else {
+            //进入升级流程时，统一提示升级中
+            checkBizState(false, T("retail_fiatmsg_business_upgrading"));
+        }
+    }
+
+
+}
