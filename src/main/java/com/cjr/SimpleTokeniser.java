@@ -6,6 +6,7 @@ import java.util.Queue;
 
 import com.cjr.tokens.AnnotationToken;
 import com.cjr.tokens.ClassToken;
+import com.cjr.tokens.ExpresssionToken;
 import com.cjr.tokens.FunctionToken;
 import com.cjr.tokens.IfToken;
 import com.cjr.tokens.LoopToken;
@@ -17,9 +18,11 @@ public class SimpleTokeniser {
     private static final boolean PRINT_DEBUG = true;
     private StringBuilder sb;
     private Queue<String> inputQueue;
+    private ExpressionParser expressionParser;
 
     public SimpleTokeniser(Queue<String> inputQueue) {
         this.inputQueue = inputQueue;
+        this.expressionParser = new ExpressionParser();
     }
 
     public List<Token> tokeniseFile() {
@@ -223,6 +226,11 @@ public class SimpleTokeniser {
         IfToken it = new IfToken(stmt);
         Queue<String> fullExpressionList = getLinesForFullExpression(stmt, body);
         String fullExpression = getFullExpression(fullExpressionList);
+        System.out.print("\t");
+        for (ExpresssionToken et: expressionParser.parseExpressionOf(fullExpression)) {
+            System.out.printf("%s | ", et.getValue());
+        }
+        System.out.println("\n");
         it.setExpressionString(fullExpression);
         it.setChildren(tokeniseBlockBody(body));
         return new IfToken(stmt);
