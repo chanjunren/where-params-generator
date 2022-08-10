@@ -14,6 +14,7 @@ import com.cjr.tokens.Token;
 import com.cjr.tokens.UnknownToken;
 
 public class SimpleTokeniser {
+    private static final boolean PRINT_DEBUG = true;
     private StringBuilder sb;
     private Queue<String> inputQueue;
 
@@ -33,21 +34,10 @@ public class SimpleTokeniser {
         if (isImport(stmt)) {
             return new StatementToken(stmt);
         } else if (isAnnotation(stmt)) {
-            Queue<String> fullAnnotation = getLinesForFullExpression(stmt, fileBody);
-            sb = new StringBuilder();
-            for (String s: fullAnnotation) {
-                sb.append(s);
-                sb.append("\n");
-            }
-            return new AnnotationToken(sb.toString());
+            return generateAnnotationTokenFrom(stmt, fileBody);
         } else if (isClass(stmt)) {
-            ClassToken ct = new ClassToken(stmt);
-            System.out.println(ct);
-            jumpToOpeningBrace(stmt, fileBody);
-            ct.setChildren(tokeniseClassBody(fileBody));
-            return ct;
+            return generateClassTokenFrom(stmt, fileBody);
         } else {
-            System.err.printf("Unhandled file statement type: %s\n", stmt);
             return new UnknownToken(stmt);
         }
     }
@@ -58,35 +48,21 @@ public class SimpleTokeniser {
         
         while (!body.isEmpty()) {
             String curr = body.poll();
-            children.add(tokeniseClassBodyStmt(body, curr));
+            children.add(tokeniseClassBodyStmt(curr, body));
         }
         return children;
     }
 
-    private Token tokeniseClassBodyStmt(Queue<String> body, String curr) {
+    private Token tokeniseClassBodyStmt(String curr, Queue<String> body) {
         if (isAnnotation(curr)) {
-            System.out.printf("Class annotation: %s\n", curr);
             return new AnnotationToken(curr);
         } else if (isStatement(curr)) {
-            System.out.printf("Class body stmt: %s\n", curr);
             return new StatementToken(curr);
         } else if (isAnnotation(curr)) {
-            Queue<String> fullAnnotation = getLinesForFullExpression(curr, body);
-            sb = new StringBuilder();
-            for (String s: fullAnnotation) {
-                sb.append(s);
-                sb.append("\n");
-            }
-            System.out.printf("Class body annotation: %s\n", sb.toString());
-            return new AnnotationToken(sb.toString());
+            return generateAnnotationTokenFrom(curr, body);
         } else if (isFunction(curr)) {
-            System.out.printf("Class body fn: %s\n", curr);
-            FunctionToken ft = new FunctionToken(getFunctionName(curr));
-            jumpToOpeningBrace(curr, body);
-            ft.setChildren(tokeniseBlockBody(body));
-            return ft;
+            return generateFunctionTokenFrom(curr, body);
         } else {
-            System.out.printf("Unhandled class body stmt type: %s\n", curr);
             return new UnknownToken(curr);
         }
     }
@@ -94,7 +70,6 @@ public class SimpleTokeniser {
 
     // for functions / if / try / catch / loop blocks
     private List<Token> tokeniseBlockBody(Queue<String> body) {
-        System.out.println("Tokenising block body");
         List<Token> block = new LinkedList<>();
         while (!body.isEmpty()) {
             String currStmt = body.poll();
@@ -105,33 +80,26 @@ public class SimpleTokeniser {
 
     private Token tokeniseBlockStmt(String stmt, Queue<String> body) {
         if (isAnnotation(stmt)) {
-            System.out.printf("Annotation: %s\n", stmt);
             return new AnnotationToken(stmt);
         } else if (isStatement(stmt)) {
-            System.out.printf("Statement: %s\n", stmt);
             return new StatementToken(stmt);
         } else if (isIfStatement(stmt)) {
-            System.out.printf("If Statement: %s\n", stmt);
-            return tokeniseIfSttmt(stmt, body);
+            return generateIfTokenFrom(stmt, body);
         } else if (isLoop(stmt)) { 
-            System.out.printf("Loop Statement: %s\n", stmt);
-            return tokeniseLoopToken(stmt, body);
+            return generateLoopTokenfrom(stmt, body);
         } else if (isCatch(stmt))  {
-            System.out.printf("Catch Statement: %s\n", stmt);
             return new UnknownToken(stmt);
-        }
-        else {
-            System.err.printf("Unhandled block stmt: %s\n", stmt);
+        } else {
             return new UnknownToken(stmt);
         }
     }
 
     private boolean isClass(String stmt) {
-        return stmt.matches("(public|private|protected)? (class) (.+)\\{");
+        return stmt.matches(RegexConstants.CLASS_PATTERN);
     }
 
     private boolean isImport(String stmt) {
-        return stmt.matches("(import) (.*)(;)");
+        return stmt.matches(RegexConstants.IMPORT_PATTERN);
     }
 
     private boolean isStatement(String stmt) {
@@ -139,27 +107,24 @@ public class SimpleTokeniser {
     }
 
     private boolean isFunction(String stmt) {
-        // access modifier, static?, return_type, name, arguments
-        return stmt.matches("(public|private|protected)? ?(static)? ?(.*) (.*) ?(\\()(.*)");
+        return stmt.matches(RegexConstants.FUNCTION_PATTERN);
     }
 
     private boolean isIfStatement(String stmt) {
-        return stmt.matches("(if)( )?\\((.*)");
+        return stmt.matches(RegexConstants.IF_PATTERN);
     }
 
-    private boolean isLoop(String stmt) {
-        String forPattern = "(for)( )?\\((.*)";
-        String whilePattern = "(while)( )?\\((.*)";
-        return stmt.matches(forPattern) || stmt.matches(whilePattern);
+    private boolean isLoop(String stmt) {    
+        return stmt.matches(RegexConstants.FOR_PATTERN) || stmt.matches(RegexConstants.WHILE_PATTERN);
     }
 
     private boolean isAnnotation(String stmt) {
-        return stmt.matches("@(.*)");
+        return stmt.matches(RegexConstants.ANNOTATION_PATTERN);
     }
 
     // Assuming catch statemnet only consists of one line
     private boolean isCatch(String stmt) {
-        return stmt.matches("(\\}?\\ ?)catch(\\ )?\\((.*)\\) ?\\{");
+        return stmt.matches(RegexConstants.CATCH_PATTERN);
     }
 
     private void jumpToOpeningBrace(String stmt, Queue<String> body) {
@@ -218,15 +183,45 @@ public class SimpleTokeniser {
         }
     }
     
+    private ClassToken generateClassTokenFrom(String stmt, Queue<String> body) {
+        if (PRINT_DEBUG) {
+            System.out.printf("Generating CLASS token from: %s\n", stmt);
+        }
+        ClassToken ct = new ClassToken(stmt);
+        jumpToOpeningBrace(stmt, body);
+        ct.setChildren(tokeniseClassBody(body));
+        return ct;
+    }
+    
+    private FunctionToken generateFunctionTokenFrom(String stmt, Queue<String> body) {
+        if (PRINT_DEBUG) {
+            System.out.printf("Generating FUNCTION token from: %s\n", stmt);
+        }
+        FunctionToken ft = new FunctionToken(getFunctionName(stmt));
+        jumpToOpeningBrace(stmt, body);
+        ft.setChildren(tokeniseBlockBody(body));
+        return ft;
+    }
+    
+    private AnnotationToken generateAnnotationTokenFrom(String stmt, Queue<String> body) {
+        Queue<String> fullAnnotation = getLinesForFullExpression(stmt, body);
+        sb = new StringBuilder();
+        for (String s: fullAnnotation) {
+            sb.append(s);
+            sb.append("\n");
+        }
+        return new AnnotationToken(sb.toString());
+   }
+   
     // Get expression string
     // Parse expression string into tokens
     // Parse children 
-    private IfToken tokeniseIfSttmt(String stmt, Queue<String> body) {
+    private IfToken generateIfTokenFrom(String stmt, Queue<String> body) {
+        if (PRINT_DEBUG) {
+            System.out.printf("Generating IF token from: %s\n", stmt);
+        }
         IfToken it = new IfToken(stmt);
         Queue<String> fullExpressionList = getLinesForFullExpression(stmt, body);
-        for (String s: fullExpressionList) {
-            System.out.printf("Expression in list: %s\n", s);
-        }
         String fullExpression = getFullExpression(fullExpressionList);
         it.setExpressionString(fullExpression);
         it.setChildren(tokeniseBlockBody(body));
@@ -236,7 +231,10 @@ public class SimpleTokeniser {
     // Get expression string
     // Parse expression string into tokens
     // Parse children 
-    private LoopToken tokeniseLoopToken(String stmt, Queue<String> body) {
+    private LoopToken generateLoopTokenfrom(String stmt, Queue<String> body) {
+        if (PRINT_DEBUG) {
+            System.out.printf("Generating Loop token from: %s\n", stmt);
+        }
         LoopToken lt = new LoopToken(stmt);
         Queue<String> fullExpressionList = getLinesForFullExpression(stmt, body);
         String fullExpression = getFullExpression(fullExpressionList);
