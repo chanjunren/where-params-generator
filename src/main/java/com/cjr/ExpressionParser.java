@@ -1,5 +1,6 @@
 package com.cjr;
 
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
@@ -23,26 +24,9 @@ public class ExpressionParser {
     }
 
     private void initOperatorSets() {
-        logicalOperators = new HashSet<>();
-        arithemticOperators = new HashSet<>();
-        brackets = new HashSet<>();
-        brackets.add('[');
-        brackets.add(']');
-        brackets.add('(');
-        brackets.add(')');
-        
-        arithemticOperators.add('+');
-        arithemticOperators.add('-');
-        arithemticOperators.add('*');
-        arithemticOperators.add('/');
-        arithemticOperators.add('%');
-
-        logicalOperators.add('<');
-        logicalOperators.add('>');
-        logicalOperators.add('=');
-        logicalOperators.add('!');
-        logicalOperators.add('&');
-        logicalOperators.add('|');
+        logicalOperators = new HashSet<>(Arrays.asList('<', '>', '=', '!', '&', '|'));
+        arithemticOperators = new HashSet<>(Arrays.asList('+', '-', '*', '/', '%'));
+        brackets = new HashSet<>(Arrays.asList('[', ']', '(', ')'));
     }
 
     public List<ExpresssionToken> parseExpressionOf(String fullExpression) {
@@ -112,28 +96,5 @@ public class ExpressionParser {
     private int getNumberOfBracesLeft(String stmt) {
         return (int) stmt.chars().filter(c -> c == '(').count()
         -  (int) stmt.chars().filter(c -> c == ')').count();
-    }
-
-    public static void main(String[] args) {
-        ExpressionParser ep = new ExpressionParser();
-        String test1 = "(DeviceDetector.isApp(request) && !DeviceDetector.isAndroid(ua) && !DeviceDetector.isAppVersionGreatThanOrEqual(request, \"4.0.8\"))";
-        String test2 = "(StringUtils.isNotEmpty(kycLevelVo.getCountryId()) || kycLevelVo.getLimitInfo().getKycLevel() != 0)";
-        String test3 = "(TradingOrderUserTypeEnum.BLOCKTRADE.getType().equalsIgnoreCase(userType))";
-        String test4 = "(currentUser!=null)";
-        for (ExpresssionToken et: ep.parseExpressionOf(test1)) {
-            System.out.println(et.getValue());
-        }
-        System.out.println();
-        for (ExpresssionToken et: ep.parseExpressionOf(test2)) {
-            System.out.println(et.getValue());
-        }
-        System.out.println();
-        for (ExpresssionToken et: ep.parseExpressionOf(test3)) {
-            System.out.println(et.getValue());
-        }
-        System.out.println();
-        for (ExpresssionToken et: ep.parseExpressionOf(test4)) {
-            System.out.println(et.getValue());
-        }
     }
 }
