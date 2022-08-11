@@ -7,11 +7,11 @@ import lombok.Data;
 
 @Data
 public class FunctionToken extends Token {
-    private List<Token> children;
+    private List<IfToken> ifTokens;
 
     public FunctionToken(String value) {
         super(value);
-        children = new LinkedList<>();
+        ifTokens = new LinkedList<>();
     }
 
     @Override

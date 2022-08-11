@@ -25,77 +25,114 @@ public class SimpleTokeniser {
         this.expressionParser = new ExpressionParser();
     }
 
-    public List<Token> tokeniseFile() {
-        List<Token> tokens = new LinkedList<>();        
-        while (!inputQueue.isEmpty()) {
-            tokens.add(tokeniseFileStatement(inputQueue.poll(), inputQueue));
+    public ClassToken extractClassToken() {
+        String currStmt = inputQueue.poll();
+        while (!isClass(currStmt)) {
+            currStmt = inputQueue.poll();
         }
-        return tokens;
+        return generateClassTokenFrom(currStmt, inputQueue);
     }
 
-    private Token tokeniseFileStatement(String stmt, Queue<String> fileBody) {
-        if (isImport(stmt)) {
-            return new StatementToken(stmt);
-        } else if (isAnnotation(stmt)) {
-            return generateAnnotationTokenFrom(stmt, fileBody);
-        } else if (isClass(stmt)) {
-            return generateClassTokenFrom(stmt, fileBody);
-        } else {
-            return new UnknownToken(stmt);
-        }
-    }
 
-    private List<Token> tokeniseClassBody(Queue<String> fileBody) {
+    // public List<Token> tokeniseFile() {
+    //     List<Token> tokens = new LinkedList<>();        
+    //     while (!inputQueue.isEmpty()) {
+    //         tokens.add(tokeniseFileStatement(inputQueue.poll(), inputQueue));
+    //     }
+    //     return tokens;
+    // }
+
+    // private Token tokeniseFileStatement(String stmt, Queue<String> fileBody) {
+    //     if (isImport(stmt)) {
+    //         return new StatementToken(stmt);
+    //     } else if (isAnnotation(stmt)) {
+    //         return generateAnnotationTokenFrom(stmt, fileBody);
+    //     } else if (isClass(stmt)) {
+    //         return generateClassTokenFrom(stmt, fileBody);
+    //     } else {
+    //         return new UnknownToken(stmt);
+    //     }
+    // }
+
+
+    // private List<Token> tokeniseClassBody(Queue<String> fileBody) {
+    //     Queue<String> body = getBodyOfScope(1, fileBody);
+    //     List<Token> children = new LinkedList<>();
+        
+    //     while (!body.isEmpty()) {
+    //         String curr = body.poll();
+    //         children.add(tokeniseClassBodyStmt(curr, body));
+    //     }
+    //     return children;
+    // }
+
+    private List<Token> extractChildrenOfClass(Queue<String> fileBody) {
         Queue<String> body = getBodyOfScope(1, fileBody);
         List<Token> children = new LinkedList<>();
-        
-        while (!body.isEmpty()) {
-            String curr = body.poll();
-            children.add(tokeniseClassBodyStmt(curr, body));
+        String currStmt = body.poll();
+        while (currStmt != null) {
+            if (isFunction(currStmt)) {
+                children.add(generateFunctionTokenFrom(currStmt, body));
+            } else if (isClass(currStmt)) {
+                children.add(generateClassTokenFrom(currStmt, body));
+            }
+            currStmt = body.poll();
         }
         return children;
     }
 
-    private Token tokeniseClassBodyStmt(String curr, Queue<String> body) {
-        if (isAnnotation(curr)) {
-            return new AnnotationToken(curr);
-        } else if (isStatement(curr)) {
-            return new StatementToken(curr);
-        } else if (isAnnotation(curr)) {
-            return generateAnnotationTokenFrom(curr, body);
-        } else if (isFunction(curr)) {
-            return generateFunctionTokenFrom(curr, body);
-        } else {
-            return new UnknownToken(curr);
-        }
-    }
+    // private Token tokeniseClassBodyStmt(String curr, Queue<String> body) {
+    //     if (isAnnotation(curr)) {
+    //         return new AnnotationToken(curr);
+    //     } else if (isStatement(curr)) {
+    //         return new StatementToken(curr);
+    //     } else if (isAnnotation(curr)) {
+    //         return generateAnnotationTokenFrom(curr, body);
+    //     } else if (isFunction(curr)) {
+    //         return generateFunctionTokenFrom(curr, body);
+    //     } else {
+    //         return new UnknownToken(curr);
+    //     }
+    // }
 
 
     // for functions / if / try / catch / loop blocks
-    private List<Token> tokeniseBlockBody(Queue<String> body) {
-        List<Token> block = new LinkedList<>();
-        while (!body.isEmpty()) {
-            String currStmt = body.poll();
-            block.add(tokeniseBlockStmt(currStmt, body));
+    // private List<Token> tokeniseBlockBody(Queue<String> body) {
+    //     List<Token> block = new LinkedList<>();
+    //     while (!body.isEmpty()) {
+    //         String currStmt = body.poll();
+    //         block.add(tokeniseBlockStmt(currStmt, body));
+    //     }
+    //     return block;
+    // }
+
+    private List<IfToken> extractIfTokens(Queue<String> body) {
+        List<IfToken> ifTokens = new LinkedList<>();
+        String currStmt = body.poll();
+        while (currStmt != null) {
+            if (isIfStatement(currStmt)) {
+                ifTokens.add(generateIfTokenFrom(currStmt, body));
+            }
+            currStmt = body.poll();
         }
-        return block;
+        return ifTokens;
     }
 
-    private Token tokeniseBlockStmt(String stmt, Queue<String> body) {
-        if (isAnnotation(stmt)) {
-            return new AnnotationToken(stmt);
-        } else if (isStatement(stmt)) {
-            return new StatementToken(stmt);
-        } else if (isIfStatement(stmt)) {
-            return generateIfTokenFrom(stmt, body);
-        } else if (isLoop(stmt)) { 
-            return generateLoopTokenfrom(stmt, body);
-        } else if (isCatch(stmt))  {
-            return new UnknownToken(stmt);
-        } else {
-            return new UnknownToken(stmt);
-        }
-    }
+    // private Token tokeniseBlockStmt(String stmt, Queue<String> body) {
+    //     if (isAnnotation(stmt)) {
+    //         return new AnnotationToken(stmt);
+    //     } else if (isStatement(stmt)) {
+    //         return new StatementToken(stmt);
+    //     } else if (isIfStatement(stmt)) {
+    //         return generateIfTokenFrom(stmt, body);
+    //     } else if (isLoop(stmt)) { 
+    //         return generateLoopTokenfrom(stmt, body);
+    //     } else if (isCatch(stmt))  {
+    //         return new UnknownToken(stmt);
+    //     } else {
+    //         return new UnknownToken(stmt);
+    //     }
+    // }
 
     private boolean isClass(String stmt) {
         return stmt.matches(RegexConstants.CLASS_PATTERN);
@@ -186,13 +223,23 @@ public class SimpleTokeniser {
         }
     }
     
+    // private ClassToken generateClassTokenFrom(String stmt, Queue<String> body) {
+    //     if (PRINT_DEBUG) {
+    //         System.out.printf("Generating CLASS token from: %s\n", stmt);
+    //     }
+    //     ClassToken ct = new ClassToken(stmt);
+    //     jumpToOpeningBrace(stmt, body);
+    //     ct.setChildren(tokeniseClassBody(body));
+    //     return ct;
+    // }
+
     private ClassToken generateClassTokenFrom(String stmt, Queue<String> body) {
         if (PRINT_DEBUG) {
             System.out.printf("Generating CLASS token from: %s\n", stmt);
         }
         ClassToken ct = new ClassToken(stmt);
         jumpToOpeningBrace(stmt, body);
-        ct.setChildren(tokeniseClassBody(body));
+        ct.setChildren(extractChildrenOfClass(body));
         return ct;
     }
     
@@ -202,7 +249,7 @@ public class SimpleTokeniser {
         }
         FunctionToken ft = new FunctionToken(getFunctionName(stmt));
         jumpToOpeningBrace(stmt, body);
-        ft.setChildren(tokeniseBlockBody(body));
+        ft.setIfTokens(extractIfTokens(body));
         return ft;
     }
     
@@ -216,9 +263,6 @@ public class SimpleTokeniser {
         return new AnnotationToken(sb.toString());
    }
    
-    // Get expression string
-    // Parse expression string into tokens
-    // Parse children 
     private IfToken generateIfTokenFrom(String stmt, Queue<String> body) {
         if (PRINT_DEBUG) {
             System.out.printf("Generating IF token from: %s\n", stmt);
@@ -226,13 +270,15 @@ public class SimpleTokeniser {
         IfToken it = new IfToken(stmt);
         Queue<String> fullExpressionList = getLinesForFullExpression(stmt, body);
         String fullExpression = getFullExpression(fullExpressionList);
-        System.out.print("\t");
-        for (ExpresssionToken et: expressionParser.parseExpressionOf(fullExpression)) {
-            System.out.printf("%s | ", et.getValue());
+        if (PRINT_DEBUG) {
+            System.out.print("\t");
+            for (ExpresssionToken et: expressionParser.parseExpressionOf(fullExpression)) {
+                System.out.printf("%s | ", et.getValue());
+            }
+            System.out.println("\n");
         }
-        System.out.println("\n");
-        it.setExpressionString(fullExpression);
-        it.setChildren(tokeniseBlockBody(body));
+        it.setPredicate(expressionParser.parseExpressionOf(fullExpression));
+        it.setInnerIfTokens(extractIfTokens(body));
         return new IfToken(stmt);
     }
 

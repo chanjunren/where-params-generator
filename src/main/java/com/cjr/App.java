@@ -7,6 +7,8 @@ import java.io.IOException;
 import java.util.LinkedList;
 import java.util.Queue;
 
+import com.cjr.tokens.ClassToken;
+
 public class App {
 
     private static final String FILE_PATH = "/Users/chanjunren/Projects/test-fields-generator/src/main/java/com/cjr/tests/V3TradingOrderController.txt";
@@ -31,6 +33,6 @@ public class App {
             System.err.println(e);
         }
         SimpleTokeniser tokeniser = new SimpleTokeniser(inputFileStrings);
-        tokeniser.tokeniseFile();
+        ClassToken ct = tokeniser.extractClassToken();
     }
 }

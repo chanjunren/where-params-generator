@@ -8,15 +8,14 @@ import lombok.Data;
 // For while / if / catch blocks
 @Data
 public class IfToken extends Token {
-    private List<Token> children;
-    private List<Token> expressions;
-    private String childrenBody;
-    private String expressionString;
+
+    private List<IfToken> innerIfTokens;
+    private List<ExpresssionToken> predicate;
     
     public IfToken(String value) {
         super(value);
-        this.children = new LinkedList<>();
-        this.expressions = new LinkedList<>();
+        this.innerIfTokens = new LinkedList<>();
+        this.predicate = new LinkedList<>();
     }
     
     @Override
