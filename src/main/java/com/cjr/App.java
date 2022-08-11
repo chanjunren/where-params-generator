@@ -8,6 +8,7 @@ import java.util.LinkedList;
 import java.util.Queue;
 
 import com.cjr.tokens.ClassToken;
+import com.cjr.tokens.Token;
 
 public class App {
 
@@ -34,5 +35,8 @@ public class App {
         }
         SimpleTokeniser tokeniser = new SimpleTokeniser(inputFileStrings);
         ClassToken ct = tokeniser.extractClassToken();
+        for (Token t: ct.getChildren()) {
+            System.out.println(t.getValue());
+        }
     }
 }

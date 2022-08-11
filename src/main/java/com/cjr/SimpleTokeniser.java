@@ -15,7 +15,7 @@ import com.cjr.tokens.Token;
 import com.cjr.tokens.UnknownToken;
 
 public class SimpleTokeniser {
-    private static final boolean PRINT_DEBUG = true;
+    private static final boolean PRINT_DEBUG = false;
     private StringBuilder sb;
     private Queue<String> inputQueue;
     private ExpressionParser expressionParser;
@@ -33,42 +33,10 @@ public class SimpleTokeniser {
         return generateClassTokenFrom(currStmt, inputQueue);
     }
 
-
-    // public List<Token> tokeniseFile() {
-    //     List<Token> tokens = new LinkedList<>();        
-    //     while (!inputQueue.isEmpty()) {
-    //         tokens.add(tokeniseFileStatement(inputQueue.poll(), inputQueue));
-    //     }
-    //     return tokens;
-    // }
-
-    // private Token tokeniseFileStatement(String stmt, Queue<String> fileBody) {
-    //     if (isImport(stmt)) {
-    //         return new StatementToken(stmt);
-    //     } else if (isAnnotation(stmt)) {
-    //         return generateAnnotationTokenFrom(stmt, fileBody);
-    //     } else if (isClass(stmt)) {
-    //         return generateClassTokenFrom(stmt, fileBody);
-    //     } else {
-    //         return new UnknownToken(stmt);
-    //     }
-    // }
-
-
-    // private List<Token> tokeniseClassBody(Queue<String> fileBody) {
-    //     Queue<String> body = getBodyOfScope(1, fileBody);
-    //     List<Token> children = new LinkedList<>();
-        
-    //     while (!body.isEmpty()) {
-    //         String curr = body.poll();
-    //         children.add(tokeniseClassBodyStmt(curr, body));
-    //     }
-    //     return children;
-    // }
-
     private List<Token> extractChildrenOfClass(Queue<String> fileBody) {
         Queue<String> body = getBodyOfScope(1, fileBody);
         List<Token> children = new LinkedList<>();
+    
         String currStmt = body.poll();
         while (currStmt != null) {
             if (isFunction(currStmt)) {
@@ -81,30 +49,7 @@ public class SimpleTokeniser {
         return children;
     }
 
-    // private Token tokeniseClassBodyStmt(String curr, Queue<String> body) {
-    //     if (isAnnotation(curr)) {
-    //         return new AnnotationToken(curr);
-    //     } else if (isStatement(curr)) {
-    //         return new StatementToken(curr);
-    //     } else if (isAnnotation(curr)) {
-    //         return generateAnnotationTokenFrom(curr, body);
-    //     } else if (isFunction(curr)) {
-    //         return generateFunctionTokenFrom(curr, body);
-    //     } else {
-    //         return new UnknownToken(curr);
-    //     }
-    // }
 
-
-    // for functions / if / try / catch / loop blocks
-    // private List<Token> tokeniseBlockBody(Queue<String> body) {
-    //     List<Token> block = new LinkedList<>();
-    //     while (!body.isEmpty()) {
-    //         String currStmt = body.poll();
-    //         block.add(tokeniseBlockStmt(currStmt, body));
-    //     }
-    //     return block;
-    // }
 
     private List<IfToken> extractIfTokens(Queue<String> body) {
         List<IfToken> ifTokens = new LinkedList<>();
@@ -118,33 +63,13 @@ public class SimpleTokeniser {
         return ifTokens;
     }
 
-    // private Token tokeniseBlockStmt(String stmt, Queue<String> body) {
-    //     if (isAnnotation(stmt)) {
-    //         return new AnnotationToken(stmt);
-    //     } else if (isStatement(stmt)) {
-    //         return new StatementToken(stmt);
-    //     } else if (isIfStatement(stmt)) {
-    //         return generateIfTokenFrom(stmt, body);
-    //     } else if (isLoop(stmt)) { 
-    //         return generateLoopTokenfrom(stmt, body);
-    //     } else if (isCatch(stmt))  {
-    //         return new UnknownToken(stmt);
-    //     } else {
-    //         return new UnknownToken(stmt);
-    //     }
-    // }
+
 
     private boolean isClass(String stmt) {
         return stmt.matches(RegexConstants.CLASS_PATTERN);
     }
 
-    private boolean isImport(String stmt) {
-        return stmt.matches(RegexConstants.IMPORT_PATTERN);
-    }
 
-    private boolean isStatement(String stmt) {
-        return stmt.contains(";");
-    }
 
     private boolean isFunction(String stmt) {
         return stmt.matches(RegexConstants.FUNCTION_PATTERN);
@@ -152,14 +77,6 @@ public class SimpleTokeniser {
 
     private boolean isIfStatement(String stmt) {
         return stmt.matches(RegexConstants.IF_PATTERN);
-    }
-
-    private boolean isLoop(String stmt) {    
-        return stmt.matches(RegexConstants.FOR_PATTERN) || stmt.matches(RegexConstants.WHILE_PATTERN);
-    }
-
-    private boolean isAnnotation(String stmt) {
-        return stmt.matches(RegexConstants.ANNOTATION_PATTERN);
     }
 
     // Assuming catch statemnet only consists of one line
@@ -223,15 +140,7 @@ public class SimpleTokeniser {
         }
     }
     
-    // private ClassToken generateClassTokenFrom(String stmt, Queue<String> body) {
-    //     if (PRINT_DEBUG) {
-    //         System.out.printf("Generating CLASS token from: %s\n", stmt);
-    //     }
-    //     ClassToken ct = new ClassToken(stmt);
-    //     jumpToOpeningBrace(stmt, body);
-    //     ct.setChildren(tokeniseClassBody(body));
-    //     return ct;
-    // }
+
 
     private ClassToken generateClassTokenFrom(String stmt, Queue<String> body) {
         if (PRINT_DEBUG) {
@@ -249,19 +158,11 @@ public class SimpleTokeniser {
         }
         FunctionToken ft = new FunctionToken(getFunctionName(stmt));
         jumpToOpeningBrace(stmt, body);
-        ft.setIfTokens(extractIfTokens(body));
+        Queue<String> functionBody = getBodyOfScope(1, body);
+        ft.setIfTokens(extractIfTokens(functionBody));
         return ft;
     }
     
-    private AnnotationToken generateAnnotationTokenFrom(String stmt, Queue<String> body) {
-        Queue<String> fullAnnotation = getLinesForFullExpression(stmt, body);
-        sb = new StringBuilder();
-        for (String s: fullAnnotation) {
-            sb.append(s);
-            sb.append("\n");
-        }
-        return new AnnotationToken(sb.toString());
-   }
    
     private IfToken generateIfTokenFrom(String stmt, Queue<String> body) {
         if (PRINT_DEBUG) {
@@ -282,9 +183,6 @@ public class SimpleTokeniser {
         return new IfToken(stmt);
     }
 
-    // Get expression string
-    // Parse expression string into tokens
-    // Parse children 
     private LoopToken generateLoopTokenfrom(String stmt, Queue<String> body) {
         if (PRINT_DEBUG) {
             System.out.printf("Generating Loop token from: %s\n", stmt);
@@ -304,4 +202,114 @@ public class SimpleTokeniser {
         while (!currElement.contains("(")) currElement = splitStmt[++currIdx];
         return currElement.substring(0, currElement.indexOf("("));
     }
+
+    // ======== OLD LOGIC ==============
+        // public List<Token> tokeniseFile() {
+    //     List<Token> tokens = new LinkedList<>();        
+    //     while (!inputQueue.isEmpty()) {
+    //         tokens.add(tokeniseFileStatement(inputQueue.poll(), inputQueue));
+    //     }
+    //     return tokens;
+    // }
+
+    // private Token tokeniseFileStatement(String stmt, Queue<String> fileBody) {
+    //     if (isImport(stmt)) {
+    //         return new StatementToken(stmt);
+    //     } else if (isAnnotation(stmt)) {
+    //         return generateAnnotationTokenFrom(stmt, fileBody);
+    //     } else if (isClass(stmt)) {
+    //         return generateClassTokenFrom(stmt, fileBody);
+    //     } else {
+    //         return new UnknownToken(stmt);
+    //     }
+    // }
+
+
+    // private List<Token> tokeniseClassBody(Queue<String> fileBody) {
+    //     Queue<String> body = getBodyOfScope(1, fileBody);
+    //     List<Token> children = new LinkedList<>();
+        
+    //     while (!body.isEmpty()) {
+    //         String curr = body.poll();
+    //         children.add(tokeniseClassBodyStmt(curr, body));
+    //     }
+    //     return children;
+    // }
+
+        // private Token tokeniseClassBodyStmt(String curr, Queue<String> body) {
+    //     if (isAnnotation(curr)) {
+    //         return new AnnotationToken(curr);
+    //     } else if (isStatement(curr)) {
+    //         return new StatementToken(curr);
+    //     } else if (isAnnotation(curr)) {
+    //         return generateAnnotationTokenFrom(curr, body);
+    //     } else if (isFunction(curr)) {
+    //         return generateFunctionTokenFrom(curr, body);
+    //     } else {
+    //         return new UnknownToken(curr);
+    //     }
+    // }
+
+
+    // for functions / if / try / catch / loop blocks
+    // private List<Token> tokeniseBlockBody(Queue<String> body) {
+    //     List<Token> block = new LinkedList<>();
+    //     while (!body.isEmpty()) {
+    //         String currStmt = body.poll();
+    //         block.add(tokeniseBlockStmt(currStmt, body));
+    //     }
+    //     return block;
+    // }
+
+    // private Token tokeniseBlockStmt(String stmt, Queue<String> body) {
+    //     if (isAnnotation(stmt)) {
+    //         return new AnnotationToken(stmt);
+    //     } else if (isStatement(stmt)) {
+    //         return new StatementToken(stmt);
+    //     } else if (isIfStatement(stmt)) {
+    //         return generateIfTokenFrom(stmt, body);
+    //     } else if (isLoop(stmt)) { 
+    //         return generateLoopTokenfrom(stmt, body);
+    //     } else if (isCatch(stmt))  {
+    //         return new UnknownToken(stmt);
+    //     } else {
+    //         return new UnknownToken(stmt);
+    //     }
+    // }
+
+    // private ClassToken generateClassTokenFrom(String stmt, Queue<String> body) {
+    //     if (PRINT_DEBUG) {
+    //         System.out.printf("Generating CLASS token from: %s\n", stmt);
+    //     }
+    //     ClassToken ct = new ClassToken(stmt);
+    //     jumpToOpeningBrace(stmt, body);
+    //     ct.setChildren(tokeniseClassBody(body));
+    //     return ct;
+    // }
+
+    // private boolean isLoop(String stmt) {    
+    //     return stmt.matches(RegexConstants.FOR_PATTERN) || stmt.matches(RegexConstants.WHILE_PATTERN);
+    // }
+
+    // private boolean isAnnotation(String stmt) {
+    //     return stmt.matches(RegexConstants.ANNOTATION_PATTERN);
+    // }
+
+    // private boolean isImport(String stmt) {
+    //     return stmt.matches(RegexConstants.IMPORT_PATTERN);
+    // }
+
+    // private boolean isStatement(String stmt) {
+    //     return stmt.contains(";");
+    // }
+
+    // private AnnotationToken generateAnnotationTokenFrom(String stmt, Queue<String> body) {
+    //     Queue<String> fullAnnotation = getLinesForFullExpression(stmt, body);
+    //     sb = new StringBuilder();
+    //     for (String s: fullAnnotation) {
+    //         sb.append(s);
+    //         sb.append("\n");
+    //     }
+    //     return new AnnotationToken(sb.toString());
+    // }
 }

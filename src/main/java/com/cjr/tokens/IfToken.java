@@ -20,5 +20,6 @@ public class IfToken extends Token {
     
     @Override
     public String toString() {
-        return String.format("=== If: %s === \n", super.getValue());    }
+        return String.format("=== If: %s === \n", super.getValue());    
+    }
 }
