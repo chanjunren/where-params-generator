@@ -20,6 +20,18 @@ public class IfToken extends Token {
     
     @Override
     public String toString() {
-        return String.format("=== If: %s === \n", super.getValue());    
+        StringBuilder sb = new StringBuilder();
+        for (ExpresssionToken et: predicate) {
+            sb.append(et.getValue());
+            sb.append(" | ");
+        }
+
+        if (innerIfTokens.size() != 0) {
+            for (IfToken it: innerIfTokens) {
+                sb.append(it.toString());
+            }
+        }
+        return (sb.length() == 0 || innerIfTokens.size() != 0) ? sb.toString()
+            : sb.substring(0, sb.length() - 3);
     }
 }

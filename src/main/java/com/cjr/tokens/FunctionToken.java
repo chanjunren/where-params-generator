@@ -16,7 +16,14 @@ public class FunctionToken extends Token {
 
     @Override
     public String toString() {
-        return String.format("Function: %s\n", super.getValue());
+        StringBuilder sb = new StringBuilder();
+        for (IfToken it: ifTokens) {
+            sb.append(it.toString());
+            sb.append(" | ");
+        }
+        return String.format("Function: %s\n%s", 
+            super.getValue(), (sb.length() == 0) || (ifTokens.size() == 0) ? sb.toString() 
+                : sb.substring(0, sb.length() - 3));
     }
     
 }

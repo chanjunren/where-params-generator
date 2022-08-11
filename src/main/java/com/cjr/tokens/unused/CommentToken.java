@@ -1,4 +1,6 @@
-package com.cjr.tokens;
+package com.cjr.tokens.unused;
+
+import com.cjr.tokens.Token;
 
 public class CommentToken extends Token {
 

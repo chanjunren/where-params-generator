@@ -36,7 +36,8 @@ public class App {
         SimpleTokeniser tokeniser = new SimpleTokeniser(inputFileStrings);
         ClassToken ct = tokeniser.extractClassToken();
         for (Token t: ct.getChildren()) {
-            System.out.println(t.getValue());
+            System.out.println(t.toString());
+            System.out.println();
         }
     }
 }

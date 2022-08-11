@@ -1,7 +1,9 @@
-package com.cjr.tokens;
+package com.cjr.tokens.unused;
 
 import java.util.LinkedList;
 import java.util.List;
+
+import com.cjr.tokens.Token;
 
 import lombok.Data;
 @Data

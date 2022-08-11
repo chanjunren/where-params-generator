@@ -1,84 +1,749 @@
-package com.okcoin.exchange.c2c.open.rest.controller.v3;
-
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
-import springfox.documentation.annotations.ApiIgnore;
-
-import static com.okcoin.exchange.c2c.open.common.BizPreconditions.checkBizState;
-import static com.okcoin.exchange.c2c.open.common.BizPreconditions.checkBizStateAddLog;
-import static com.okcoin.exchange.c2c.open.common.util.LocaleUtil.T;
-import static java.lang.String.format;
-
-/**
- * @author: lingqing.wan
- * @date: 2018-06-29 上午11:38
- */
-@Slf4j
-@Validated
-@RestController
-@RequestMapping(value = "/v3/c2c/tradingOrders")
-@Api(tags={"Trading order controller"},description = "委托单类接口")
 public class V3TradingOrderController {
-    @Resource
-    private UserService userService;
-    @Resource
-    private BrokerUserService brokerUserService;
-    @Resource
-    private TradingOrderService tradingOrderService;
-    @Resource
-    private DistributedLock distributedLock;
-    @Resource
-    private CurrencyService currencyService;
-    @Resource
-    private V3TradingOrderVoConverter v3TradingOrderVoConverter;
+  
+    @OKRateLimit
+    @ApiOperation(value = "根据id获取一笔委托单")
+    @GetMapping(value = "/{publicId}")
+    public ResponseResult<TradingOrderVo> getTradingOrderByPublicTradingOrderId(
+        @ApiIgnore
+        @AttributeValue(required = false) final OkCoinUser currentUser,
+        @PathVariable
+        @ApiParam(value = "交易单ID", required = true) final String publicId,
+        @ApiParam(value = "来源交易区")
+        @RequestParam(required = false, defaultValue = "") final String fromArea,
+        @ApiParam(value = "交易所BrokerId")
+        @AttributeValue final int brokerId) {
 
-    @Autowired
-    private OKExTickerService okExTickerService;
-    @Resource
-    private ConfigService configService;
-    @Resource
-    private TradeChecker tradeChecker;
-    @Resource
-    private CurrencyPairService currencyPairService;
-    @Resource
-    private ShareService shareService;
-    @Resource
-    private CouponService couponService;
-    @Resource
-    private UserBlackService userBlackService;
-    @Resource
-    private ActionDisableService actionDisableService;
+        // NON-NLS
+        BizPreconditions.checkBizState(CharacterUtils.checkPublicOrderId(publicId),false,"Illegal request");
+        TradingOrder tradingOrder = this.tradingOrderService.getFilledTradingOrderByPublicTradingOrderId(Long.parseLong(publicId));
 
-    @Resource
-    private UserBalanceService userBalanceService;
+        checkBizState(tradingOrder != null, false,"TradingOrder not found : publicTradingOrderId=%s", publicId);
 
-    @Resource
-    private UserReceiptService userReceiptService;
+        TradingOrderVo tradingOrderVo = new TradingOrderVo();
+        // 查询拉黑状态
+        String blackState = "";
+        // 登陆态需判断
+        if(currentUser!=null){
+            BlackStateTypeEnum blackStateTypeEnum = this.userBlackService.getUserBlackState(currentUser.getUserId(), tradingOrder.getUserId());
+            blackState = blackStateTypeEnum.getName();
+            tradingOrderVo.setBlackState(blackState);
+            // 主动拉黑 // 被动拉黑、双方拉黑
+            if (blackStateTypeEnum.getCode() == BlackStateTypeEnum.BLACK_OTHER.getCode() || blackStateTypeEnum.getCode() == BlackStateTypeEnum.BLACKED.getCode()
+                    || blackStateTypeEnum.getCode() == BlackStateTypeEnum.BLACK_EACH_OTHER.getCode()) {
+                tradingOrderVo.setCreator(new UserVo());
+                return ResponseResult.build(0, T("retail_fiatmsg_no_view"), "", tradingOrderVo);
+            }
 
-    @Resource
-    private WebAppEnvProperties webAppEnvProperties;
+            //查看非本人委托单详情时，校验当前查看用户是否支持委托单所在交易区
+            if(tradingOrder.getUserId() != currentUser.getUserId()){
+                User user = this.userService.getUserByUserId(currentUser.getUserId());
+                //已认证kyc的用户才校验（兼容web端kyc引导流程）
+                KycLevelDTO kycLevelVo = this.userService.getKycInfo(user.getUserId());
+                if (StringUtils.isNotEmpty(kycLevelVo.getCountryId()) || kycLevelVo.getLimitInfo().getKycLevel() != 0){
+                    this.tradeChecker.ensureCurrencySupportUserArea(user, tradingOrder.getLegalCurrencySymbol(), currentUser.getBrokerId());
+                }
+            }
+        }
 
-    @Resource
-    private GlobalBusinessService globalBusinessService;
-    @Resource
-    private TradingOrderReceiptRelationService tradingOrderReceiptRelationService;
+        // 来自大宗区的单子，设置最小单笔限额
+        if (C2cConstants.FROM_AREA_BLOCK_TRADE.equalsIgnoreCase(fromArea)) {
+            double minBlockTradePrice = this.configService.doubleOf(String.format("block_trade_min_amount_per_order_%s", tradingOrder.getLegalCurrencySymbol()), 100000d);
 
-    @Resource
-    private UserPunishmentService userPunishmentService;
+            if (tradingOrder.getMinPlacePrice().doubleValue() < minBlockTradePrice) {
+                tradingOrder.setMinPlacePrice(BigDecimal.valueOf(minBlockTradePrice));
+            }
+        }
+        // NON-NLS
+        boolean lowerAppClient = !DeviceDetector.compareAppVersion(ClientMessageHolder.get().getClientUserAgent(), "4.5.2", "4.5.2", "1.4.8", "1.4.8");
 
+        if (lowerAppClient && tradingOrder.getSafetyLimit() && !this.globalBusinessService.openOrderRisk() && (currentUser == null || currentUser.getUserId() != tradingOrder.getUserId())) {
+            // NON-NLS
+            tradingOrder.setRemark(T("retail_fiatmsg_safety_limit_tips").replace("\\n", "\n") + "\n\n" + tradingOrder.getRemark());
+        }
+
+        long userId = currentUser != null ? currentUser.getUserId() : 0L;
+        return ResponseResult.success(this.tradingOrderService.getTradingOrderDetails(userId,brokerId, tradingOrder));
+
+    }
+
+    @OKRateLimit
+    @RateLimiter(LimitLevel.LOW)
+    @ApiOperation(value = "创建交易单")
+    @PostMapping(value = {"/", "/info"})
+    public ResponseResult placeTradingOrder(
+        @ApiIgnore
+        @AttributeValue OkCoinUser currentUser,
+        @AttributeValue Integer brokerId,
+        @RequestBody PlaceTradingOrderRequest placeTradingOrderRequest) throws Exception {
+        // 委托单限速
+        // NON-NLS
+        tradeChecker.ensureSimpleRateLimitChecked(currentUser.getUserId(), "trading_order_rate_limit");
+
+        this.tradeChecker.ensureUserNotDisabled(currentUser.getUser());
+        //创建委托单的前置校验
+        this.preCreatedTradingOrderCheckParameter(placeTradingOrderRequest, currentUser);
+
+        final TradingCreateVo tradingCreateVo = v3TradingOrderVoConverter.tradingCreateVoForm(placeTradingOrderRequest);
+
+        // 委托单校验鸽子王
+        if (tradingCreateVo.getIsBuy()) {
+            this.actionDisableService.checkUserActionDisable(currentUser.getUserId(), DisableActionEnum.TRADINGORDER_CREATE);
+        }
+        // 用户非实名收付款锁定等级检查
+        this.userPunishmentService.checkUserPunishLevel(currentUser.getUserId(), currentUser.getBrokerId(), PunishBizType.NON_REAL_NAME_ACCOUNT, true);
+
+        String lockKey = String.format("_lock_place_trading_order_%s_%s_%s_%s", currentUser.getUserId(), placeTradingOrderRequest.getSide(),
+            placeTradingOrderRequest.getBaseCurrency(), placeTradingOrderRequest.getQuoteCurrency());
+
+         // 检验余额
+        BigDecimal userBalance = this.userBalanceService.getMarketableBalanceByUserId(currentUser.getUserId(),placeTradingOrderRequest.getBaseCurrency(), brokerId);
+
+        Object publicId = this.distributedLock.runWithLock(lockKey, 30, () ->
+            this.tradingOrderService.createTradingOrder(tradingCreateVo, currentUser.getUserId(), brokerId,true,userBalance, placeTradingOrderRequest.getTradePassword()
+                    , TFATypeEnum.codeOf(placeTradingOrderRequest.getTfaType()),placeTradingOrderRequest.getTfaCode()));
+        checkBizState(null != publicId, "CREATE_TRADING_ORDER_ERROR");
+
+        return ResponseResult.success(
+            v3TradingOrderVoConverter.createdVoForm(Long.valueOf(String.valueOf(publicId)), currentUser.getUserId(), currentUser.getBrokerId()));
+    }
+
+    @OKRateLimit
+    @RateLimiter(LimitLevel.LOW)
+    @ApiOperation(value = "创建委托单分步校验")
+    @PostMapping(value = "/placeCheck")
+    public ResponseResult placeCheck(
+        @ApiIgnore
+        @AttributeValue OkCoinUser currentUser,
+        @AttributeValue Integer brokerId,
+        @RequestBody StepPlaceTradingOrderRequest stepPlaceReq) {
+        this.stepParamPreCheck(currentUser, stepPlaceReq);
+        final User creator = this.userService.getUserByUserId(currentUser.getUserId());
+        // NON-NLS
+        checkBizStateAddLog(null != creator,"User not found", "User not found userId "+ currentUser.getUserId());
+
+        TradingOrderCheckResultVo resultVo = tradingOrderService.stepCheck(creator, currentUser.getBrokerId(), stepPlaceReq);
+        return ResponseResult.success(resultVo);
+    }
+
+    @OKRateLimit
+    @RateLimiter(LimitLevel.LOW)
+    @ApiOperation(value = "修改委托单分步校验")
+    @PostMapping(value = "/modifyCheck")
+    public ResponseResult modifyCheck(
+        @ApiIgnore
+        @AttributeValue OkCoinUser currentUser,
+        @AttributeValue Integer brokerId,
+        @RequestBody StepModifyTradingOrderRequest stepModifyRequest) {
+        this.stepParamPreCheck(currentUser, stepModifyRequest);
+        final User creator = this.userService.getUserByUserId(currentUser.getUserId());
+        // NON-NLS
+        checkBizStateAddLog(null != creator,"User not found", "User not found userId "+ currentUser.getUserId());
+
+        TradingOrder oldTradingOrder = this.tradingOrderService.getTradingOrderByPublicTradingOrderId(stepModifyRequest.getPublicId());
+        checkBizState(null != oldTradingOrder, "tradingOrder not found");
+        boolean isOwner = oldTradingOrder.getUserId() == currentUser.getUserId();
+        checkBizState(isOwner, "It's not your tradingOrder");
+        checkBizState(oldTradingOrder.getBrokerId() == currentUser.getBrokerId(), "can not cancel");
+        // 意向单不允许参与
+        boolean intentionTradingOrder = oldTradingOrder.getBest().equals(C2cConstants.INTENTION_TRADING_ORDER);
+        checkBizState(!intentionTradingOrder, T("retail_fiatmsg_intention_trading_can_not_update"));
+
+        // NON-NLS
+        stepModifyRequest.setSide(oldTradingOrder.getIsBuy() ? "buy" : "sell");
+        stepModifyRequest.setBaseCurrency(oldTradingOrder.getDigitalCurrencySymbol());
+        stepModifyRequest.setQuoteCurrency(oldTradingOrder.getLegalCurrencySymbol());
+        stepModifyRequest.setMaxAvgPaymentTime(oldTradingOrder.getMaxAvgPaymentTime());
+        stepModifyRequest.setMaxAvgCompleteTime(oldTradingOrder.getMaxAvgCompleteTime());
+        stepModifyRequest.setIsBlockTrade(oldTradingOrder.getIsBlockTrade());
+
+        TradingOrderCheckResultVo resultVo = tradingOrderService.stepCheck(creator, currentUser.getBrokerId(), stepModifyRequest);
+        return ResponseResult.success(resultVo);
+    }
+
+    private void stepParamPreCheck(OkCoinUser currentUser, StepPlaceTradingOrderRequest stepRequest){
+        List<Integer> steps = new ArrayList<>(Arrays.asList(0, 1, 2, 3));
+        checkBizState(stepRequest.getStep() != null && steps.contains(stepRequest.getStep()), "step param illegal");
+        //币对检查
+        checkBizState(StringUtils.isNotEmpty(stepRequest.getBaseCurrency()), false,"Currency not found: %s",stepRequest.getBaseCurrency());
+        checkBizState(StringUtils.isNotEmpty(stepRequest.getQuoteCurrency()), false,"Currency not found: %s",stepRequest.getQuoteCurrency());
+        //im升级检查
+        imUpgradeCheck(currentUser.getBrokerId());
+    }
+
+    @OKRateLimit
+    @RateLimiter(LimitLevel.LOW)
+    @ApiOperation(value = "创建交易单前置校验,仅WEB端用的接口")
+    @GetMapping(value = "/preCheck")
+    public ResponseResult<TradingOrderPreCheckVo> preCheck(
+        @ApiIgnore
+        @AttributeValue OkCoinUser currentUser,
+        @RequestParam String baseCurrency,
+        @RequestParam String quoteCurrency) {
+        int level = this.userService.getKycLevelById(currentUser.getUserId(), currentUser.getBrokerId());
+        // NON-NLS
+        int needLevel = this.configService.intOf(format("trading_order_min_kyc_level_%s", quoteCurrency), 1);
+
+        UserUniformBean uniform = this.userService.getUserUniformBean(currentUser.getUserId());
+
+        List<UserReceiptAccount> receiptAccounts = this.userReceiptService.getAvailableUserReceiptList(currentUser.getUserId(), currentUser.getBrokerId()).stream()
+            .filter(x -> x.getCurrency().equalsIgnoreCase(quoteCurrency))
+            .collect(Collectors.toList());
+
+        // -1 不需要 0 未通过 1 已通过
+        return ResponseResult.success(TradingOrderPreCheckVo.builder()
+            .kyc1Verified(needLevel < 1 ? -1 : (level >= 1 ? 1 : 0))
+            .kyc2Verified(needLevel < 2 ? -1 : (level >= 2 ? 1 : 0))
+            // 删除必须绑银行卡限制
+            .realnameBankCardBound(-1)
+            .phoneNumberBound(StringUtils.isNotBlank(uniform.getPhone()) ? 1 : 0)
+            .paymentMethodOpened(paymentMethodOpened(receiptAccounts) ? 1 : 0)
+            .build());
+    }
+
+    private boolean paymentMethodOpened(List<UserReceiptAccount> receiptAccounts) {
+        return receiptAccounts.stream().anyMatch(
+            x -> !x.getDisabled() && (ReceiptApplyTypeEnum.receiptReveal(x.getReceiptApplyType()) || ReceiptApplyTypeEnum.paymentReveal(x.getReceiptApplyType())));
+    }
+
+    @OKRateLimit
+    @RateLimiter(LimitLevel.LOW)
+    @ApiOperation(value = "取消交易单")
+    @PostMapping(value = "/{publicId}/cancel")
+    public ResponseResult cancel(
+        @ApiIgnore
+        @AttributeValue final OkCoinUser currentUser,
+        @PathVariable
+        @ApiParam(value = "交易单ID", required = true) final long publicId) {
+        this.tradeChecker.ensureUserNotDisabled(currentUser.getUser());
+        final TradingOrder tradingOrder = this.tradingOrderService.getTradingOrderByPublicTradingOrderId(publicId);
+        checkBizState(null != tradingOrder, false,"tradingOrder not found");
+        checkBizState(tradingOrder.getBrokerId() == currentUser.getBrokerId(), "can not  cancel");
+        boolean isOwner = tradingOrder.getUserId() == currentUser.getUserId();
+        //if (!isOwner) {
+        //    log.warn("Illegal args.currentUserId:{}.", currentUser.getUserId());
+        //    this.userService.disableUser(currentUser.getUserId(), true, "非法操作他人委托单[取消委托单]");
+        //}
+        checkBizState(isOwner, "It's not your tradingOrder");
+        this.tradingOrderService.cancelTradingOrder(tradingOrder.getId());
+        return ResponseResult.success();
+    }
+
+    @OKRateLimit
+    @RateLimiter(LimitLevel.LOW)
+    @ApiOperation(value = "取消所有交易单")
+    @PostMapping(value = "/cancelAll")
+    public ResponseResult cancel(
+        @ApiIgnore
+        @AttributeValue final OkCoinUser currentUser) {
+        this.tradeChecker.ensureUserNotDisabled(currentUser.getUser());
+        final List<TradingOrder> tradingOrderList = this.tradingOrderService.listTradingOrders(TradingOrderStatusEnum.NEW, currentUser.getUserId(),
+            null, null, null, null, null,null);
+        for (final TradingOrder tradingOrder : tradingOrderList) {
+            if (tradingOrder.getBrokerId() == currentUser.getBrokerId()) {
+                this.tradingOrderService.cancelTradingOrder(tradingOrder.getId());
+            }
+        }
+        return ResponseResult.success();
+    }
+
+    @OKRateLimit
+    @RateLimiter(LimitLevel.LOW)
+    @ApiOperation(value = "更新接单状态（作用在人身上）")
+    @PostMapping(value = "/acceptOrder/{state}")
+    public ResponseResult updateAcceptOrder(
+        @ApiIgnore
+        @AttributeValue final OkCoinUser currentUser,
+        @ApiParam(value = "更新接单状态:start,stop", required = true)
+        @PathVariable final String state,
+        HttpServletRequest request) {
+        // 校验state
+        TradingOrderHiddenEnum tradingOrderHiddenEnum = TradingOrderHiddenEnum.acceptTypeOf(state);
+        checkBizState(null != tradingOrderHiddenEnum, "Unknown state: %s", state);
+
+        // 老版本iOS直接阻断
+        String ua = request.getHeader("User-Agent");
+        // NON-NLS
+        if (DeviceDetector.isApp(request) && !DeviceDetector.isAndroid(ua) && !DeviceDetector.isAppVersionGreatThanOrEqual(request, "4.0.8")) {
+            throw new BizException(BizErrorCodeEnum.COMMON_ERROR.getCode(), T("retail_fiatmsg_upgrade_app_version"));
+        }
+
+        // 恶意申诉惩罚机制
+        if (tradingOrderHiddenEnum == TradingOrderHiddenEnum.SHOW && brokerUserService.isMaliciousAppealUser(currentUser.getUserId())) {
+            String timeLimit = brokerUserService.maliciousAppealUserTimeLimit(currentUser.getUserId());
+            if (StringUtils.isNotEmpty(timeLimit)) {
+                // NON-NLS
+                if (DeviceDetector.compareWithBuildVersion(ClientMessageHolder.get().getClientUserAgent(), "6.0.14", "6.0.14", "20220311006001")) {
+                    throw new BizException(BizErrorCodeEnum.MERCHANT_MALICIOUS_APPEAL.getCode(), T("retail_fiatmsg_merchant_malicious_appeal_hint"), timeLimit);
+                } else {
+                    String hint = T("retail_fiatmsg_merchant_malicious_appeal_hint");
+                    throw new BizException(BizErrorCodeEnum.MERCHANT_MALICIOUS_APPEAL.getCode(), hint.substring(0, hint.indexOf("|")));
+                }
+            }
+        }
+
+        // 修改接单状态
+        this.userService.updateAcceptOrder(currentUser.getUserId(), currentUser.getBrokerId(), tradingOrderHiddenEnum == TradingOrderHiddenEnum.SHOW);
+        return ResponseResult.success();
+    }
+
+    @OKRateLimit
+    @RateLimiter(LimitLevel.LOW)
+    @ApiOperation(value = "更新接单状态（针对某个订单）")
+    @PostMapping(value = "/acceptOrder/{state}/{publicId}")
+    public ResponseResult updateAcceptOrderById(
+        @ApiIgnore
+        @AttributeValue final OkCoinUser currentUser,
+        @ApiParam(value = "更新接单状态:show,hidden", required = true)
+        @PathVariable final String state,
+        @ApiParam(value = "交易单ID", required = true)
+        @PathVariable final long publicId,
+        @ApiParam(value = "资金密码")
+        @RequestJsonParam(required = false, defaultValue = "") final String tradePassword,
+        @ApiParam(value = "2fa类型")
+        @RequestJsonParam(required = false) final int tfaType,
+        @ApiParam(value = "对应的2fa的code")
+        @RequestJsonParam(required = false) final String tfaCode,
+
+        HttpServletRequest request) {
+        // 校验state
+        TradingOrderHiddenEnum tradingOrderHiddenEnum = TradingOrderHiddenEnum.typeOf(state);
+        checkBizState(null != tradingOrderHiddenEnum, "Unknown state: %s", state);
+
+        // 老版本iOS直接阻断
+        String ua = request.getHeader("User-Agent");
+        // NON-NLS
+        if (DeviceDetector.isApp(request) && !DeviceDetector.isAndroid(ua) && !DeviceDetector.isAppVersionGreatThanOrEqual(request, "4.0.8")) {
+            throw new BizException(BizErrorCodeEnum.COMMON_ERROR.getCode(), T("retail_fiatmsg_upgrade_app_version"));
+        }
+
+        // 校验委托单
+        TradingOrder tradingOrder = this.tradingOrderService.getTradingOrderByPublicTradingOrderId(publicId);
+        // NON-NLS
+        BizPreconditions.checkBizState(tradingOrder != null, "tradingOrder is not exists");
+        // NON-NLS
+        BizPreconditions.checkBizState(tradingOrder.getUserId() == currentUser.getUserId() && tradingOrder.getBrokerId() == currentUser.getBrokerId(), "unauthorized");
+
+        this.tradingOrderService.updateAcceptOrder(tradingOrder.getId(), tradingOrderHiddenEnum,currentUser.getUser(),currentUser.getBrokerId(), tradePassword
+                ,TFATypeEnum.codeOf(tfaType),tfaCode);
+
+        return ResponseResult.success();
+    }
+
+    @OKRateLimit
+    @ApiOperation(value = "获取买一卖一价格")
+    @GetMapping(value = "/headPrice")
+    public ResponseResult<Map<String, String>> getHeadPrice(
+        @ApiIgnore
+        @AttributeValue final OkCoinUser currentUser,
+        @RequestParam
+        @ApiParam(required = true, value = "基础货币符号：BTC,ETC") final String baseCurrency,
+        @RequestParam
+        @ApiParam(required = true, value = "报价货币符号：CNY,USD") final String quoteCurrency) {
+        final Currency legalCurrency = this.currencyService.getCurrencyBySymbol(quoteCurrency);
+        checkBizState(null != legalCurrency, false,"Currency not found: %s", quoteCurrency);
+        final Currency digitalCurrency = this.currencyService.getCurrencyBySymbol(baseCurrency);
+        checkBizState(null != digitalCurrency, false,"Currency not found: %s", baseCurrency);
+
+        final TradingOrderBookVo tradingOrderBookVo = this.tradingOrderService.getBook(
+            TradingOrderBookRequest.builder()
+                .digitalCurrency(digitalCurrency.getCurrencySymbol())
+                .legalCurrency(legalCurrency.getCurrencySymbol())
+                .side(V3TradingOrderTypeEnum.ALL.getDescription())
+                .userType(TradingOrderUserTypeEnum.ALL.getType())
+                .baseMinAmount(0D)
+                .quoteMinAmount(0D)
+                .quoteMaxAmount(0D)
+                .quoteMinAmountPerOrder(0D)
+                .quoteMaxAmountPerOrder(0D)
+                .paymentMethod(ReceiptAccountTypeEnum.ALL.getAbbreviation())
+                .user(currentUser == null ? null : currentUser.getUser())
+                .build());
+
+        final BigDecimal exchangeRate = this.okExTickerService.getMarketIndexTicker(baseCurrency, quoteCurrency);
+
+        final Map<String, String> priceMap = new HashMap<>(2);
+        priceMap.put("buy", tradingOrderBookVo.getBuy().isEmpty() ? exchangeRate.toPlainString(): tradingOrderBookVo.getBuy().get(0).getPrice());
+        priceMap.put("sell", tradingOrderBookVo.getSell().isEmpty() ? exchangeRate.toPlainString()
+            : tradingOrderBookVo.getSell().get(tradingOrderBookVo.getSell().size() - 1).getPrice());
+
+        return ResponseResult.success(priceMap);
+    }
+
+    @OKRateLimit
+    @ApiOperation(value = "获取用户最后一次发单的信息")
+    @GetMapping(value = "/getLast")
+    public ResponseResult<TradingOrderVo> getLastTradingOrder(
+        @ApiIgnore
+        @AttributeValue final OkCoinUser currentUser,
+        @RequestParam
+        @ApiParam(required = true, value = "基础货币符号：BTC,ETC") final String baseCurrency,
+        @RequestParam
+        @ApiParam(required = true, value = "报价货币符号：CNY,USD") final String quoteCurrency,
+        @RequestParam
+        @ApiParam(required = true, value = "买卖：buy,sell") final String side) {
+        final Boolean isBuy = V3OrderTypeEnum.BUY.getDescription().equalsIgnoreCase(side);
+
+        final TradingOrder tradingOrder = this.tradingOrderService.getLastTradingOrder(currentUser.getUserId(), quoteCurrency.toUpperCase(),
+                baseCurrency.toUpperCase(), isBuy);
+        if (null == tradingOrder) {
+            return ResponseResult.success(new TradingOrderVo());
+        }
+
+        return ResponseResult.success(this.tradingOrderService.getLastTradingOrder(tradingOrder));
+    }
+
+    @OKRateLimit
+    @ApiOperation(value = "委托单分享")
+    @GetMapping(value = "/share")
+    @EnableDynamicCDNUrl
+    public ResponseResult<TradingOrderShareVo> tradingOrderShare(
+        @ApiIgnore
+        @AttributeValue final OkCoinUser currentUser,
+        @ApiParam(required = true, value = "委托单公开ID")
+        @RequestParam final long publicTradingOrderId) {
+
+        checkBizState(currentUser.getBrokerId() == C2cConstants.OKEX_BROKER_ID, T("retail_fiatmsg_broker_id"));
+        TradingOrderShareVo tradingOrderShareVo =
+            shareService.getTradingOrderSharedInfo(publicTradingOrderId, () -> {
+                TradingOrder tradingOrder = this.tradingOrderService.getTradingOrderByPublicTradingOrderId(publicTradingOrderId);
+                checkBizState(null != tradingOrder, false, "tradingOrder not found");
+                // 判断当前委托单是不是当前登录人的
+                checkBizState(tradingOrder.getUserId() == currentUser.getUserId(), false, "Place Share your tradingOrder");
+                boolean supportTradingOrderReceipt = globalBusinessService.supportTradingOrderReceipt(tradingOrder.getLegalCurrencySymbol());
+                List<TradingOrderReceiptRelation> tradingOrderReceiptRelationList = supportTradingOrderReceipt ?
+                    tradingOrderReceiptRelationService.tradingOrderReceiptRelationList(ImmutableList.of(tradingOrder.getPublicTradingOrderId())) : new ArrayList<>();
+                return this.v3TradingOrderVoConverter.tradingOrderShareVoForm(tradingOrder, tradingOrderReceiptRelationList, supportTradingOrderReceipt);
+            });
+        return ResponseResult.success(tradingOrderShareVo);
+    }
+
+    @OKRateLimit
+    @ApiOperation(value = "使用加速券")
+    @PostMapping(value = "/use/accelerate_coupon")
+    public ResponseResult<UseCouponVo> useCoupon(
+        @ApiIgnore
+        @AttributeValue final OkCoinUser currentUser,
+        @ApiParam(required = true, value = "加速券ID集合") @RequestJsonParam final List<Integer> ids,
+        @ApiParam(required = true, value = "publicId") @RequestJsonParam final long publicId) {
+
+        checkBizState(CollectionUtils.isNotEmpty(ids), T("retail_fiatmsg_please_choose_the_accelerate_coupon"));
+
+        final TradingOrder tradingOrder = this.tradingOrderService.getTradingOrderByPublicTradingOrderId(publicId);
+
+        checkBizState(null != tradingOrder, "tradingOrder not found");
+        checkBizState(currentUser.getUserId() == tradingOrder.getUserId(), T("retail_fiatmsg_yourself_order"));
+        checkBizState(!tradingOrder.getIsBuy(), T("retail_fiatmsg_be_speed"));
+        boolean isBlocKTrade = C2cConstants.CURRENCY_CNY_SYMBOL.equalsIgnoreCase(tradingOrder.getLegalCurrencySymbol()) &&
+                tradingOrder.getMinPlacePrice().doubleValue() >= this.configService.doubleOf(String.format("block_trade_min_amount_per_order_%s", tradingOrder.getLegalCurrencySymbol()), 100000d);
+        checkBizState(!isBlocKTrade, T("retail_fiatmsg_cannot_be_used_in_bulk_orders"));
+
+        final List<Long> idResult = ids.stream().map(Integer::longValue).collect(Collectors.toList());
+        // 使用加速券
+        final UseCouponVo result = this.couponService.useCoupons(idResult, currentUser.getUserId(), currentUser.getBrokerId(), tradingOrder);
+
+        return ResponseResult.success(result);
+    }
+
+    /**
+     * 创建委托单前的前置校验
+     * @param placeTradingOrderRequest 请求参数
+     * @param currentUser 当前用户
+     */
+    private void preCreatedTradingOrderCheckParameter(PlaceTradingOrderRequest placeTradingOrderRequest, OkCoinUser currentUser) {
+        boolean isAmountLegal = NumberUtils.isParsable(placeTradingOrderRequest.getBaseAmount()) && placeTradingOrderRequest.getBaseAmount().length() <= 18;
+        checkBizState(isAmountLegal, "baseAmount param illegal.");
+
+        //校验用户是否触发了资金卖禁止
+        if (placeTradingOrderRequest.getSide().equalsIgnoreCase(V3TradingOrderTypeEnum.SELL.getDescription())){
+           tradeChecker.checkAssetUserForbidden(currentUser.getUserId());
+        }
+        //IM升级检查
+        imUpgradeCheck(currentUser.getBrokerId());
+
+        //web旧版本,交易限制已下线时,前端传值置为无效
+        // NON-NLS
+        boolean enable = configService.booleanOf("trade_limit_invalid_for_web", false);
+        boolean isCny = C2cConstants.CURRENCY_CNY_SYMBOL.equalsIgnoreCase(placeTradingOrderRequest.getQuoteCurrency());
+        if (enable && isCny && !DeviceDetector.isApp()){
+            placeTradingOrderRequest.setMinCompletedOrderQuantity(null);
+            placeTradingOrderRequest.setMaxCompletedOrderQuantity(null);
+            placeTradingOrderRequest.setMinKycLevel(null);
+            placeTradingOrderRequest.setMinSellOrderQuantity(null);
+            placeTradingOrderRequest.setMaxUserCreatedDate(null);
+            placeTradingOrderRequest.setUserMaxRegisterDays(null);
+        }
+
+        checkBizState(!this.configService.booleanOf(ConfigNameEnum.PLACE_TRADING_ORDER_DISABLED, false), ()->T("retail_fiatmsg_trading_order_place_disabled"));
+        // ！！！一个兼容老版本app的策略
+        if (placeTradingOrderRequest.getSide().equalsIgnoreCase(V3TradingOrderTypeEnum.SELL.getDescription())) {
+            if (DeviceVersion.trade2faVersion()) {
+                tradeChecker.checkTrade2fa(currentUser.getUserId(), placeTradingOrderRequest.tfaTypeEnum(), placeTradingOrderRequest.getTfaCode());
+            }else if (!DeviceVersion.trade2faVersion() && StringUtils.isNotEmpty(placeTradingOrderRequest.getTradePassword())) {
+                tradeChecker.checkUserTradePassWord(currentUser.getUserId(), placeTradingOrderRequest.getTradePassword(), null);
+            }
+        } else {
+            // 非CNY地区时 平台限制：根据当地法律法规，您所在的地区 (安大略) 无法访问OKEx.com的产品或服务。 如果您不居住在当前地区并且能提供有效证件，完成身份认证后，方可继续使用OKEx
+            boolean countryLimitCheck = !C2cConstants.CURRENCY_CNY_SYMBOL.equalsIgnoreCase(placeTradingOrderRequest.getQuoteCurrency());
+            if (countryLimitCheck) {
+                KycLevelDTO kycInfo = this.userService.getKycInfo(currentUser.getUserId(), true);
+                if(kycInfo.getLimitInfo()!=null) {
+                    boolean limit = kycInfo.getLimitInfo().isLimit() && kycInfo.getLimitInfo().getKycLevel() <= 1;
+                     String area = StringUtils.defaultString(kycInfo.getLimitInfo().getDisplayCountryName(),"") +
+                    StringUtils.defaultString(kycInfo.getLimitInfo().getProvince(),"");
+                checkBizState(!limit, BizErrorCodeEnum.PLATFORM_LIMIT_COUNTRY.getCode(), () -> T("retail_fiatmsg_platform_limit_country_new_key", ImmutableMap.of("area", area)));
+                }
+            }
+        }
+
+        checkBizState(StringUtils.isNotEmpty(placeTradingOrderRequest.getBaseCurrency()), false,"Currency not found: %s",placeTradingOrderRequest.getBaseCurrency());
+        checkBizState(StringUtils.isNotEmpty(placeTradingOrderRequest.getQuoteCurrency()), false,"Currency not found: %s",placeTradingOrderRequest.getQuoteCurrency());
+
+        final Currency digitalCurrency = this.currencyService.getCurrencyBySymbol(placeTradingOrderRequest.getBaseCurrency().toUpperCase());
+        checkBizState(null != digitalCurrency, false,"Currency not found: %s", placeTradingOrderRequest.getBaseCurrency().toUpperCase());
+        final Currency legalCurrency = this.currencyService.getCurrencyBySymbol(placeTradingOrderRequest.getQuoteCurrency().toUpperCase());
+        checkBizState(null != legalCurrency, false,"Currency not found: %s", placeTradingOrderRequest.getQuoteCurrency().toUpperCase());
+
+
+        // 检查未支付订单超时分钟数
+        final List<String> unpaidOrderTimeoutMinutes =
+        this.configService.listOfMulti(new String[] {
+                String.format("unpaid_order_time_out_minutes_%s", placeTradingOrderRequest.getQuoteCurrency().toUpperCase()),
+                String.format("unpaid_order_time_out_minutes_%s", C2cConstants.BASE_LINE) },new ArrayList<>());
+        final Integer unpaidTimeoutMinutes = placeTradingOrderRequest.getUnpaidOrderTimeoutMinutes();
+        final boolean isLegal = unpaidTimeoutMinutes != null && unpaidTimeoutMinutes != 0 && CollectionUtils.isNotEmpty(unpaidOrderTimeoutMinutes);
+        if (isLegal) {
+            checkBizState(unpaidOrderTimeoutMinutes.contains(unpaidTimeoutMinutes.toString()), T("retail_fiatmsg_invalid_unpaid_order_time_out_minutes_value"));
+        } else {
+            String[] unpaidOrderTimeoutMinutesConfigArr = new String[] {
+                ConfigNameEnum.UNPAID_ORDER_TIMEOUT_MINUTES.formatWith(placeTradingOrderRequest.getQuoteCurrency().toUpperCase()),
+                ConfigNameEnum.UNPAID_ORDER_TIMEOUT_MINUTES.formatWith(C2cConstants.BASE_LINE)
+            };
+            final long unpaidOrderTimeoutMinute = this.configService.longOfMulti(unpaidOrderTimeoutMinutesConfigArr,15);
+
+            placeTradingOrderRequest.setUnpaidOrderTimeoutMinutes((int)unpaidOrderTimeoutMinute);
+        }
+
+        //用户最大注册天数校验
+        if (placeTradingOrderRequest.getUserMaxRegisterDays() != null && placeTradingOrderRequest.getUserMaxRegisterDays() != 0) {
+            // NON-NLS
+            final List<String> userMaxRegisterDays = this.configService.listOf("trading_order_user_max_register_days", Arrays.asList("30", "90", "180", "365"));
+            boolean contains = userMaxRegisterDays.stream().mapToInt(Integer::parseInt).anyMatch(i -> i == placeTradingOrderRequest.getUserMaxRegisterDays());
+            checkBizState(contains, T("retail_fiatmsg_order_invalid_register_days"));
+//            checkBizState(contains, "你选择的用户最大注册天数限制不符合要求，请调整后重试");
+        }
+
+        // 校验最小完成率 - app前端不拦截，pc拦截
+        if (placeTradingOrderRequest.getMinCompletionRate() != null) {
+            checkBizState(placeTradingOrderRequest.getMinCompletionRate() >= 0 && placeTradingOrderRequest.getMinCompletionRate() < 1,
+                T("retail_fiatmsg_min_completion_rate"));
+        }
+
+        if (placeTradingOrderRequest.getMinCompletedOrderQuantity() != null && placeTradingOrderRequest.getMinCompletedOrderQuantity() == -1) {
+            placeTradingOrderRequest.setMinCompletedOrderQuantity(null);
+        }
+
+        if (placeTradingOrderRequest.getMaxCompletedOrderQuantity() != null && placeTradingOrderRequest.getMaxCompletedOrderQuantity() == -1) {
+            placeTradingOrderRequest.setMaxCompletedOrderQuantity(null);
+        }
+
+        // 检查对手成交单数
+        final Integer minOrderQuantity = placeTradingOrderRequest.getMinCompletedOrderQuantity();
+        final Integer maxOrderQuantity = placeTradingOrderRequest.getMaxCompletedOrderQuantity();
+
+        if (minOrderQuantity != null) {
+            // 判断 min 是否在范围内
+            // NON-NLS
+            final Range<Double> orderQuantityRange = this.configService.doubleRangeOf("order_quantity", null);
+            checkBizState(orderQuantityRange.contains(Double.valueOf(minOrderQuantity)), T("ORDER_QUANTITY_OUT_OF_RANGE"),
+                orderQuantityRange.lowerEndpoint().intValue(), orderQuantityRange.upperEndpoint().intValue());
+        }
+
+        if (maxOrderQuantity != null) {
+            // 判断 max 是否在范围内
+            // NON-NLS
+            final Range<Double> orderQuantityRange = this.configService.doubleRangeOf("order_quantity", null);
+            checkBizState(orderQuantityRange.contains(Double.valueOf(maxOrderQuantity)), T("ORDER_QUANTITY_OUT_OF_RANGE"),
+                orderQuantityRange.lowerEndpoint().intValue(), orderQuantityRange.upperEndpoint().intValue());
+        }
+
+        // 检查对手卖币成交单数
+        final Integer minSellOrderQuantity = placeTradingOrderRequest.getMinSellOrderQuantity();
+
+        if (minSellOrderQuantity != null && minSellOrderQuantity == 0) {
+            placeTradingOrderRequest.setMinSellOrderQuantity(null);
+        }
+
+        if (placeTradingOrderRequest.getMinSellOrderQuantity() != null) {
+            // 判断 min 是否在范围内
+            // NON-NLS
+            final Range<Double> orderQuantityRange = this.configService.doubleRangeOf("sell_order_quantity", null);
+            checkBizState(orderQuantityRange.contains(Double.valueOf(placeTradingOrderRequest.getMinSellOrderQuantity())),
+                    () -> T("retail_fiatmsg_sell_order_quantity_out_of_range_new_key", ImmutableMap.of("lowOrderQuantity", String.valueOf(orderQuantityRange.upperEndpoint().intValue()))));
+        }
+
+        // NON-NLS
+        final int differenceValue = this.configService.intOf("order_quantity_difference_value", 50);
+
+        // eg: (0,0) || (0,10) || (10,0) || (20,10) ...
+        if ((minOrderQuantity != null && minOrderQuantity >= 0) && (maxOrderQuantity != null && maxOrderQuantity > 0)) {
+
+            checkBizState(minOrderQuantity < maxOrderQuantity, T("retail_fiatmsg_order_quantity_min_higher_max"));
+            checkBizState(maxOrderQuantity - minOrderQuantity >= differenceValue, T("retail_fiatmsg_order_quantity_difference_value"));
+
+            //(null , 50) || (null,0)...
+        } else if (minOrderQuantity == null && maxOrderQuantity != null) {
+            //判断 max - min ≥ 50
+            checkBizState(maxOrderQuantity >= differenceValue, T("retail_fiatmsg_order_quantity_difference_value"));
+        }
+        placeTradingOrderRequest.setUnenterMarket(checkEnterMarket(placeTradingOrderRequest,currentUser.getUser(),currentUser.getBrokerId()));
+        // doge、eth、ltc、okb
+        List<String> shadowCurrencyArr = this.currencyService.shadowCurrencyArr(placeTradingOrderRequest.getQuoteCurrency());
+        boolean disableCurrency = shadowCurrencyArr.contains(placeTradingOrderRequest.getBaseCurrency().toLowerCase());
+        if (disableCurrency) {
+            String currencyPair = String.format("%s-%s", placeTradingOrderRequest.getBaseCurrency(), placeTradingOrderRequest.getQuoteCurrency());
+            // eth、ltc、okb 时返回true；doge时，返回false
+            boolean shadowCurrencyDashboardEnabled = this.currencyService.shadowCurrencyEnabledDashboard(currencyPair);
+            BizPreconditions.checkBizState(shadowCurrencyDashboardEnabled, T("retail_fiatmsg_shadow_currency_not_support"));
+        }
+
+        //接单广告校验
+        if(placeTradingOrderRequest.isReceivingAds()){
+            checkBizState(placeTradingOrderRequest.getSide().equalsIgnoreCase(V3TradingOrderTypeEnum.SELL.getDescription()),T("retail_fiatmsg_trading_order_ads_only_sell_support_value"));
+            //checkBizState(!placeTradingOrderRequest.isUnenterMarket(),T("TRADING_ORDER_ADS_ONLY_ENTER_MARKET_SUPPORT_VALUE"));
+            checkBizState(currentUser.getUser().getIsDiamondUser() || currentUser.getUser().getIsCertifiedUser(), T("retail_fiatmsg_trading_order_ads_only_merchant_support_value"));
+            List<String> receivingAdsList = this.configService.listOf(ConfigNameEnum.RECEIVING_ADS_LIST.getName(), new ArrayList<>(), String.class);
+            checkBizState(receivingAdsList.contains(placeTradingOrderRequest.getQuoteCurrency().toUpperCase()),T("retail_fiatmsg_trading_order_ads_not_support_quote_currency_value"));
+        }
+
+        boolean supportTradingOrder = globalBusinessService.supportTradingOrderReceipt(placeTradingOrderRequest.getQuoteCurrency());
+        if (supportTradingOrder) {
+            //低版本提示升级
+            checkBizState(globalBusinessService.supportTradingOrderReceiptAppVersion(), T("retail_fiatmsg_app_version_update_for_receipt"));
+
+            if (placeTradingOrderRequest.getSide().equalsIgnoreCase(V3TradingOrderTypeEnum.BUY.getDescription())) {
+                boolean supportTradingOrderCheckPaymentMethods = StringUtils.isNotEmpty(placeTradingOrderRequest.getPaymentMethods());
+                checkBizState(supportTradingOrderCheckPaymentMethods, T("retail_fiatmsg_param_not_empty"));
+            } else {
+                boolean supportTradingOrderCheckReceiptIds = CollectionUtils.isNotEmpty(placeTradingOrderRequest.getReceiptIds());
+                checkBizState(supportTradingOrderCheckReceiptIds, T("retail_fiatmsg_param_not_empty"));
+            }
+        }
+
+        this.userService.synUserRealName(currentUser.getUser());
+    }
+    /**
+     * 判断是否可以进盘口 , 将所有收口放在入库前判断
+     * @param placeTradingOrderRequest req
+     * @param creator user
+     * @param brokerId id
+     * @return  判断是否可以进盘口
+     */
+    private Boolean checkEnterMarket(PlaceTradingOrderRequest placeTradingOrderRequest, User creator, int brokerId) {
+        String fiatCurrency = placeTradingOrderRequest.getQuoteCurrency().toLowerCase();
+        String identity = this.userService.getCertifiedLevel(creator,true).getType().toLowerCase();
+        int kycLevel = this.userService.getKycLevelById(creator.getUserId(), brokerId);
+        String direction = placeTradingOrderRequest.getSide().toLowerCase();
+        String cryptoCurrency = placeTradingOrderRequest.getBaseCurrency().toLowerCase();
+
+        //如果可以选择是否进盘口 则取前端传入的值
+        if (this.tradingOrderService.multiConfigEnterMarket(fiatCurrency, identity, kycLevel, direction, cryptoCurrency, brokerId)) {
+            return placeTradingOrderRequest.isUnenterMarket();
+        }
+        //这里的语义是不进盘口 为true
+        return true;
+    }
+
+    @OKRateLimit
+    @ApiOperation(value = "修改委托单：先取消现在的委托单， 同时重新创建一个委托单")
+    @PostMapping(value = "/modify")
+    public ResponseResult rePlaceTradingOrder(
+        @ApiIgnore
+        @AttributeValue OkCoinUser currentUser,
+        @AttributeValue Integer brokerId,
+        @RequestBody ModifyPlaceTradingOrderRequest placeTradingOrderRequest) {
+        // 委托单限速
+        // NON-NLS
+        tradeChecker.ensureSimpleRateLimitChecked(currentUser.getUserId(), "trading_order_rate_limit");
+        checkBizState(placeTradingOrderRequest.getPublicId()!=null && placeTradingOrderRequest.getPublicId()>0,"tradingOrder not found");
+        this.tradeChecker.ensureUserNotDisabled(currentUser.getUser());
+        TradingOrder oldTradingOrder = this.tradingOrderService.getTradingOrderByPublicTradingOrderId(placeTradingOrderRequest.getPublicId());
+        checkBizState(null != oldTradingOrder, "tradingOrder not found");
+        boolean isOwner = oldTradingOrder.getUserId() == currentUser.getUserId();
+        //if (!isOwner) {
+        //    log.warn("Illegal args.currentUserId:{}.", currentUser.getUserId());
+        //    this.userService.disableUser(currentUser.getUserId(), true, "非法操作他人委托单[修改委托单]");
+        //}
+        checkBizState(isOwner, "It's not your tradingOrder");
+
+        placeTradingOrderRequest.setSide(oldTradingOrder.getIsBuy() ? C2cConstants.BUY : C2cConstants.SELL);
+        placeTradingOrderRequest.setBaseCurrency(oldTradingOrder.getDigitalCurrencySymbol());
+        placeTradingOrderRequest.setQuoteCurrency(oldTradingOrder.getLegalCurrencySymbol());
+        placeTradingOrderRequest.setMaxAvgPaymentTime(oldTradingOrder.getMaxAvgPaymentTime());
+        placeTradingOrderRequest.setMaxAvgCompleteTime(oldTradingOrder.getMaxAvgCompleteTime());
+        placeTradingOrderRequest.setIsBlockTrade(oldTradingOrder.getIsBlockTrade());
+        // 前置校验
+        this.preCreatedTradingOrderCheckParameter(placeTradingOrderRequest, currentUser);
+        checkBizState(oldTradingOrder.getBrokerId() == currentUser.getBrokerId(), "can not cancel");
+        TradingCreateVo tradingCreateVo = v3TradingOrderVoConverter.tradingCreateVoForm(placeTradingOrderRequest);
+        // 意向单不允许参与
+        boolean intentionTradingOrder = oldTradingOrder.getBest().equals(C2cConstants.INTENTION_TRADING_ORDER);
+        checkBizState(!intentionTradingOrder, T("retail_fiatmsg_intention_trading_can_not_update"));
+
+        // 委托单校验鸽子王
+        if (tradingCreateVo.getIsBuy()) {
+            this.actionDisableService.checkUserActionDisable(currentUser.getUserId(), DisableActionEnum.TRADINGORDER_CREATE);
+        }
+
+        // 用户非实名收付款锁定等级检查
+        this.userPunishmentService.checkUserPunishLevel(currentUser.getUserId(), currentUser.getBrokerId(), PunishBizType.NON_REAL_NAME_ACCOUNT, true);
+
+         // 检验余额
+        final BigDecimal userBalance = this.userBalanceService.getMarketableBalanceByUserId(currentUser.getUserId(),placeTradingOrderRequest.getBaseCurrency(), brokerId);
+        long publicId = this.tradingOrderService.reCreateTradingOrder(tradingCreateVo, currentUser.getUserId(), brokerId, oldTradingOrder, placeTradingOrderRequest.isOnline(),userBalance, placeTradingOrderRequest.getTradePassword()
+                ,TFATypeEnum.codeOf(placeTradingOrderRequest.getTfaType()),placeTradingOrderRequest.getTfaCode());
+        return ResponseResult.success(
+            v3TradingOrderVoConverter.createdVoForm(publicId, currentUser.getUserId(), currentUser.getBrokerId()));
+    }
 
     @OKRateLimit
     @RateLimiter(LimitLevel.HIGH)
-    @ApiOperation(value = "获取交易单列表")
-    @GetMapping(value = "/books")
-    public ResponseResult<Map<String, List<TradingOrderBookMemberNewVo>>> getNewBook(
+    @ApiOperation(value = "landing-page落地页盘口信息")
+    @GetMapping(value = "/landing-page/books")
+    public ResponseResult<Map<String, List<TradingOrderBookMemberNewVo>>> getBooks(
         @ApiIgnore
         @AttributeValue(required = false) final OkCoinUser currentUser,
+        @ApiParam(required = true, value = "基础货币符号：BTC,ETC")
+        @RequestParam(defaultValue = "BTC") final String baseCurrency,
+        @ApiParam(required = true, value = "报价货币符号：CNY,USD")
+        @RequestParam(defaultValue = "INR") final String quoteCurrency,
+        @ApiParam(value = "交易所BrokerId")
+        @AttributeValue final int brokerId,
+        HttpServletRequest request) {
+        if (!DeviceDetector.isApp(request) && DeviceDetector.isSpider(request)) {
+            String ua = request.getHeader("User-Agent");
+            log.info("spider. ua:{}", ua);
+            throw new OkC2CTooManyRequestsException();
+        }
+        log.info("landing-page books param baseCurrency:{},quoteCurrency:{}", baseCurrency, quoteCurrency);
+        checkBizState(quoteCurrency.equals(C2cConstants.CURRENCY_INR_SYMBOL) || quoteCurrency.equals(C2cConstants.CURRENCY_VND_SYMBOL), T("retail_fiatmsg_parameter_error"));
+        final TradingOrderBookVo tradingOrderBookVo = tradingOrderService.getLandingBooks(TradingOrderBookRequest.builder()
+                .brokerId(brokerId)
+                .digitalCurrency(baseCurrency)
+                .legalCurrency(quoteCurrency)
+                .side(C2cConstants.SELL)
+                .user(currentUser == null ? null : currentUser.getUser()).build());
+        List<TradingOrderBookMemberNewVo> sell = CollectionUtils.isEmpty(tradingOrderBookVo.getSell())?
+                new ArrayList<>() : tradingOrderBookVo.getSell().stream().map(a -> v3TradingOrderVoConverter.tOrderMemberVoNewFrom(a,true)).collect(Collectors.toList());
+        return ResponseResult.success(ImmutableMap.of("sell", sell));
+    }
+
+    @OKRateLimit
+    @ApiOperation(value = "判断某个委托单未出现在盘口的原因")
+    @GetMapping(value = "/survey/{publicOrderId}")
+    public ResponseResult<List<TradeSurveyItemVo>> surveyTradingOrder(
+        @PathVariable final Long publicOrderId,
+        @ApiIgnore
+        @AttributeValue final OkCoinUser currentUser,
         @ApiParam(required = true, value = "数据类型：all,sell,buy")
         @RequestParam(required = false, defaultValue = "all") final String side,
         @ApiParam(required = true, value = "基础货币符号：BTC,ETC")
@@ -89,8 +754,6 @@ public class V3TradingOrderController {
         @RequestParam(required = false, defaultValue = "all") final String userType,
         @ApiParam(value = "过滤基础币数量")
         @RequestParam(required = false, defaultValue = "0") final Double baseMinAmount,
-        @ApiParam(value = "过滤基础币限额, 是基础币数量乘以单价和委托单限额比较")
-        @RequestParam(required = false, defaultValue = "0") final Double baseQuota,
         @ApiParam(value = "过滤报价币数量（大于）")
         @RequestParam(required = false, defaultValue = "0") final Double quoteMinAmount,
         @ApiParam(value = "过滤报价币数量（小于）")
@@ -105,104 +768,61 @@ public class V3TradingOrderController {
         @AttributeValue final int brokerId,
         @ApiParam(value = "仅展示可交易")
         @RequestParam(required = false, defaultValue = "false") final Boolean showTrade,
+        @ApiParam(value = "模拟的用户ID")
+        @RequestParam(required = false, defaultValue = "0") final Long checkUserId,
         @ApiParam(value = "不展示T+1")
-        @RequestParam(required = false, defaultValue = "false") final Boolean noShowSafetyLimit,
-        @ApiParam(value = "仅展示我的关注")
-        @RequestParam(required = false, defaultValue = "false") final Boolean showFollow,
-        @ApiParam(value = "展示交易过")
-        @RequestParam(required = false, defaultValue = "false") final Boolean showAlreadyTraded,
-        @ApiParam(value = "不展示接单广告")
-        @RequestParam(required = false, defaultValue = "false") final Boolean receivingAds,
-        HttpServletRequest request) {
-        if (!DeviceDetector.isApp(request) && DeviceDetector.isSpider(request)) {
-            String ua = request.getHeader("User-Agent");
-            log.warn("spider. ua:{}", ua);
-            throw new OkC2CTooManyRequestsException();
-        }
-
-        final List<CurrencyPair> currencyPairList = currencyPairService.listCurrencyPair(brokerId);
-        boolean anyCurrencyPair = currencyPairList.stream().anyMatch(currencyPair -> currencyPair.getQuoteCurrency().equalsIgnoreCase(quoteCurrency)
-                && currencyPair.getBaseCurrency().equalsIgnoreCase(baseCurrency));
-
-        // 获取qp买币支持的币种
-        List<String> shadowCurrencyArr = this.currencyService.shadowCurrencyArr(quoteCurrency);
-        // 是否qp买币
-        boolean swap = shadowCurrencyArr.stream().anyMatch(v -> v.equalsIgnoreCase(baseCurrency));
-        // 是qp买币， 但是该币种要求在盘口展示
-        boolean shadowCurrencyDashboardEnabled = this.currencyService.shadowCurrencyEnabledDashboard(C2cConstants.CURRENCY_PAIR_FORMAT(baseCurrency,quoteCurrency));
-        swap = !swap || shadowCurrencyDashboardEnabled;
-        //NON-NLS
-        checkBizState(anyCurrencyPair && swap, false, T("CURRENCY_PAIR_NOT_SUPPORT"));
-
-        final Currency digitalCurrency = this.currencyService.getCurrencyBySymbol(brokerId, baseCurrency);
-        checkBizState(null != digitalCurrency, false,"Currency not found: %s", baseCurrency);
-        final Currency legalCurrency = this.currencyService.getCurrencyBySymbol(brokerId, quoteCurrency);
-        checkBizState(null != legalCurrency, false,"Currency not found: %s", quoteCurrency);
-
-        String[] configNames = {
-                String.format("block_trade_min_amount_per_order_%s", quoteCurrency),
-                String.format("block_trade_min_amount_per_order_%s", C2cConstants.BASE_LINE)
-        };
-        Double minBlockTradeAmount = this.configService.doubleOfMulti(configNames, 100000d);
-        if (TradingOrderUserTypeEnum.BLOCKTRADE.getType().equalsIgnoreCase(userType)) {
-            checkBizState(brokerId == C2cConstants.OKEX_BROKER_ID, () -> T("retail_fiatmsg_block_trading_not_support_broker_new_key", minBlockTradeAmount.toString()));
-        }
-        //app新老版本判断（收付款方式数量限制）
+        @RequestParam(required = false, defaultValue = "0") final Boolean noShowSafetyLimit,
+        @ApiParam(value = "仅展示关注商家")
+        @RequestParam(required = false, defaultValue = "0") final Boolean showFollow,
+        @ApiParam(value = "仅展示已交易过")
+        @RequestParam(required = false, defaultValue = "0") final Boolean showAlreadyTraded,
+        @ApiParam(value = "隐藏验证单")
+        @RequestParam(required = false, defaultValue = "0") final Boolean receivingAds) {
         // NON-NLS
-        boolean highVersion = DeviceDetector.compareWithBuildVersion(ClientMessageHolder.get().getClientUserAgent(), "5.0.12", "5.0.12", "20210722");
+        List<Long> userIdList = this.configService.listOf("survey_user_list", new ArrayList<>(), Long.class);
+        // NON-NLS
+        BizPreconditions.checkBizState(userIdList.contains(currentUser.getUserId()), " can't operation");
+        User checkUser = currentUser.getUser();
+        if(checkUserId !=null && checkUserId!=0) {
+            checkUser = this.userService.getUserByUserId(checkUserId);
+        }
+        TradingOrderBookRequest tradingOrderBookRequest = TradingOrderBookRequest.builder()
+            .digitalCurrency(baseCurrency)
+            .legalCurrency(quoteCurrency)
+            .side(side)
+            .userType(userType)
+            .baseMinAmount(baseMinAmount)
+            .quoteMinAmount(quoteMinAmount)
+            .quoteMaxAmount(quoteMaxAmount)
+            .quoteMinAmountPerOrder(quoteMinAmountPerOrder)
+            .quoteMaxAmountPerOrder(quoteMaxAmountPerOrder)
+            .paymentMethod(paymentMethod)
+            .user(checkUser)
+            .brokerId(brokerId)
+            .showTrade(showTrade)
+            .noShowSafetyLimit(noShowSafetyLimit)
+            .showFollow(showFollow)
+            .showAlreadyTraded(showAlreadyTraded)
+            .receivingAds(receivingAds)
+            .build();
 
-        final TradingOrderBookVo tradingOrderBookVo = this.tradingOrderService.getBook(
-                TradingOrderBookRequest.builder()
-                        .digitalCurrency(baseCurrency)
-                        .legalCurrency(quoteCurrency)
-                        .side(side)
-                        .userType(userType)
-                        .baseMinAmount(baseMinAmount)
-                        .quoteMinAmount(quoteMinAmount)
-                        .quoteMaxAmount(quoteMaxAmount)
-                        .quoteMinAmountPerOrder(quoteMinAmountPerOrder)
-                        .quoteMaxAmountPerOrder(quoteMaxAmountPerOrder)
-                        .paymentMethod(paymentMethod)
-                        .user(currentUser == null ? null : currentUser.getUser())
-                        .brokerId(brokerId)
-                        .showTrade(showTrade)
-                        .noShowSafetyLimit(noShowSafetyLimit)
-                        .showFollow(showFollow)
-                        .showAlreadyTraded(showAlreadyTraded)
-                        .receivingAds(receivingAds)
-                        .baseQuota(baseQuota)
-                        .build());
-        List<TradingOrderBookMemberNewVo> sell = CollectionUtils.isEmpty(tradingOrderBookVo.getSell())?
-        new ArrayList<>() : tradingOrderBookVo.getSell().stream().map(a -> v3TradingOrderVoConverter.tOrderMemberVoNewFrom(a,highVersion)).collect(Collectors.toList());
-        List<TradingOrderBookMemberNewVo> buy = CollectionUtils.isEmpty(tradingOrderBookVo.getBuy())?
-                new ArrayList<>() : tradingOrderBookVo.getBuy().stream().map(a -> v3TradingOrderVoConverter.tOrderMemberVoNewFrom(a,highVersion)).collect(Collectors.toList());
-
-        retussrn ResponseResult.success(ImmutableMap.of("sell", sell, "buy", buy));
+        List<TradeSurveyItemVo> tradeSurveyItemList = this.tradingOrderService.surveyTradingOrder(publicOrderId, tradingOrderBookRequest);
+        return ResponseResult.success(tradeSurveyItemList);
     }
 
     @OKRateLimit
-    @RateLimiter(LimitLevel.HIGH)
-    @ApiOperation(value = "获取我的交易单列表，正在进行中的")
-    @GetMapping(value = "/my")
-    public ResponseResult<List<TradingOrderVo>> getMyTradingOrders(
-        @ApiIgnore
-        @AttributeValue final OkCoinUser currentUser,
-        @RequestParam(required = false)
-        @ApiParam(value = "基础货币符号：BTC,ETC") final String baseCurrency,
-        @RequestParam(required = false)
-        @ApiParam(value = "报价货币符号：CNY,USD") final String quoteCurrency,
-        @RequestParam(required = false, defaultValue = "all")
-        @ApiParam(required = true, value = "数据类型：all,sell,buy") final String side) {
-
-        final Boolean isBuy = "all".equalsIgnoreCase(side) ? null : "buy".equalsIgnoreCase(side);
-
-        final List<TradingOrderVo> myTradingOrderList = this.tradingOrderService.getMyTradingOrders(currentUser.getUserId(), currentUser.getBrokerId(), quoteCurrency, baseCurrency, isBuy);
-
-        if (CollectionUtils.isEmpty(myTradingOrderList)) {
-            return ResponseResult.success(new ArrayList<>());
+    @RateLimiter(LimitLevel.LOW)
+    @ApiOperation(value = "统计委托单交易数据统计")
+    @GetMapping(value = "/stats")
+    public ResponseResult<TradeStatsVo> tradingOrderStats(
+        @ApiParam(required = true, value = "获取的时间点") @RequestParam String baseTime,
+        @ApiParam(required = true, value = "单价top数据条数") @RequestParam final Integer topCount) {
+        if (!"pre".equalsIgnoreCase(webAppEnvProperties.getEnv().getName())) {
+            return ResponseResult.success(TradeStatsVo.builder().build());
         }
-
-        return ResponseResult.success(myTradingOrderList);
+        Date date = DateUtils.formatDate(baseTime, DateUtils.FULL_PATTERN);
+        TradeStatsVo tradingOrderStatsList = tradingOrderService.getTradingOrderStats(date, topCount);
+        return ResponseResult.success(tradingOrderStatsList);
     }
 
     /**
@@ -235,6 +855,22 @@ public class V3TradingOrderController {
             //进入升级流程时，统一提示升级中
             checkBizState(false, T("retail_fiatmsg_business_upgrading"));
         }
+    }
+
+    @OKRateLimit
+    @RateLimiter(LimitLevel.LOW)
+    @ApiOperation(value = "工具：修复委托单单独设置收付方式存量数据")
+    @PostMapping(value = "/tradingOrderReceipt")
+    public ResponseResult tradingOrderStats(
+        @ApiParam(required = true, value = "交易区，多个使用逗号分隔")
+        @RequestJsonParam String quoteCurrency,
+        @ApiParam(required = false, value = "具体的委托单号", defaultValue = "0")
+        @RequestJsonParam(required = false, defaultValue = "0") final Long publicTradingOrderId) {
+        if (!"pre".equalsIgnoreCase(webAppEnvProperties.getEnv().getName())) {
+            return ResponseResult.success(T("retail_fiatmsg_can_not_penration_new_key", webAppEnvProperties.getEnv().getName()));
+        }
+        tradingOrderService.fixTradingOrderReceipt(quoteCurrency.split(","),publicTradingOrderId);
+        return ResponseResult.success();
     }
 
 

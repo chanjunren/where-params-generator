@@ -4,15 +4,11 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Queue;
 
-import com.cjr.tokens.AnnotationToken;
 import com.cjr.tokens.ClassToken;
 import com.cjr.tokens.ExpresssionToken;
 import com.cjr.tokens.FunctionToken;
 import com.cjr.tokens.IfToken;
-import com.cjr.tokens.LoopToken;
-import com.cjr.tokens.StatementToken;
 import com.cjr.tokens.Token;
-import com.cjr.tokens.UnknownToken;
 
 public class SimpleTokeniser {
     private static final boolean PRINT_DEBUG = false;
@@ -180,19 +176,7 @@ public class SimpleTokeniser {
         }
         it.setPredicate(expressionParser.parseExpressionOf(fullExpression));
         it.setInnerIfTokens(extractIfTokens(body));
-        return new IfToken(stmt);
-    }
-
-    private LoopToken generateLoopTokenfrom(String stmt, Queue<String> body) {
-        if (PRINT_DEBUG) {
-            System.out.printf("Generating Loop token from: %s\n", stmt);
-        }
-        LoopToken lt = new LoopToken(stmt);
-        Queue<String> fullExpressionList = getLinesForFullExpression(stmt, body);
-        String fullExpression = getFullExpression(fullExpressionList);
-        lt.setExpressionString(fullExpression);
-        lt.setChildren(tokeniseBlockBody(body));
-        return lt;
+        return it;
     }
     
     private String getFunctionName(String stmt) {
@@ -311,5 +295,17 @@ public class SimpleTokeniser {
     //         sb.append("\n");
     //     }
     //     return new AnnotationToken(sb.toString());
+    // }
+
+    // private LoopToken generateLoopTokenfrom(String stmt, Queue<String> body) {
+    //     if (PRINT_DEBUG) {
+    //         System.out.printf("Generating Loop token from: %s\n", stmt);
+    //     }
+    //     LoopToken lt = new LoopToken(stmt);
+    //     Queue<String> fullExpressionList = getLinesForFullExpression(stmt, body);
+    //     String fullExpression = getFullExpression(fullExpressionList);
+    //     lt.setExpressionString(fullExpression);
+    //     lt.setChildren(tokeniseBlockBody(body));
+    //     return lt;
     // }
 }
