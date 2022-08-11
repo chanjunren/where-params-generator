@@ -4,6 +4,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Queue;
 
+import com.cjr.parser.tokens.CheckBizToken;
 import com.cjr.parser.tokens.ClassToken;
 import com.cjr.parser.tokens.ExpresssionToken;
 import com.cjr.parser.tokens.FunctionToken;
@@ -47,16 +48,28 @@ public class SimpleTokeniser {
 
 
 
-    private List<IfToken> extractIfTokens(Queue<String> body) {
-        List<IfToken> ifTokens = new LinkedList<>();
+    private List<IfToken> extractIfTokensForFunction(Queue<String> body) {
+        List<IfToken> childrenTokens = new LinkedList<>();
         String currStmt = body.poll();
         while (currStmt != null) {
             if (isIfStatement(currStmt)) {
-                ifTokens.add(generateIfTokenFrom(currStmt, body));
+                childrenTokens.add(generateIfTokenFrom(currStmt, body));
             }
             currStmt = body.poll();
         }
-        return ifTokens;
+        return childrenTokens;
+    }
+
+    private void addChildrenFor(IfToken parentToken, Queue<String> body) {
+        String currStmt = body.poll();
+        while (currStmt != null) {
+            if (isIfStatement(currStmt)) {
+                parentToken.addChild(generateIfTokenFrom(currStmt, body));
+            } else if (isBizStateCheck(currStmt)) {
+                parentToken.addChild(generateCheckBizTokenFrom(currStmt, body));
+            }
+            currStmt = body.poll();
+        }
     }
 
 
@@ -64,8 +77,6 @@ public class SimpleTokeniser {
     private boolean isClass(String stmt) {
         return stmt.matches(RegexConstants.CLASS_PATTERN);
     }
-
-
 
     private boolean isFunction(String stmt) {
         return stmt.matches(RegexConstants.FUNCTION_PATTERN);
@@ -78,6 +89,10 @@ public class SimpleTokeniser {
     // Assuming catch statemnet only consists of one line
     private boolean isCatch(String stmt) {
         return stmt.matches(RegexConstants.CATCH_PATTERN);
+    }
+
+    private boolean isBizStateCheck(String stmt) {
+        return stmt.matches(RegexConstants.CHECK_BIZ_PATTERN);
     }
 
     private void jumpToOpeningBrace(String stmt, Queue<String> body) {
@@ -103,7 +118,6 @@ public class SimpleTokeniser {
         return bodyList;
     }
 
-    // For annotations outside of a class (does not handle inner class)
     private Queue<String> getLinesForFullExpression(String currStmt, Queue<String> body) {
         Queue<String> allLines = new LinkedList<>();
         allLines.add(currStmt);
@@ -135,8 +149,6 @@ public class SimpleTokeniser {
             sb.deleteCharAt(sb.length() - 1);
         }
     }
-    
-
 
     private ClassToken generateClassTokenFrom(String stmt, Queue<String> body) {
         if (PRINT_DEBUG) {
@@ -155,8 +167,17 @@ public class SimpleTokeniser {
         FunctionToken ft = new FunctionToken(getFunctionName(stmt));
         jumpToOpeningBrace(stmt, body);
         Queue<String> functionBody = getBodyOfScope(1, body);
-        ft.setIfTokens(extractIfTokens(functionBody));
+        ft.setIfTokens(extractIfTokensForFunction(functionBody));
         return ft;
+    }
+
+    private CheckBizToken generateCheckBizTokenFrom(String stmt, Queue<String> body) {
+        if (PRINT_DEBUG) {
+            System.out.printf("Generating CHECKBIZ token from: %s\n", stmt);
+        }
+        Queue<String> fullExpressionList = getLinesForFullExpression(stmt, body);
+        String fullExpression = getFullExpression(fullExpressionList);
+        return new CheckBizToken(fullExpression);
     }
     
    
@@ -175,7 +196,7 @@ public class SimpleTokeniser {
             System.out.println("\n");
         }
         it.setPredicate(expressionParser.parseExpressionOf(fullExpression));
-        it.setInnerIfTokens(extractIfTokens(body));
+        addChildrenFor(it, body);
         return it;
     }
     
